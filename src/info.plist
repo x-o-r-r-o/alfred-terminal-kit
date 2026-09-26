@@ -1031,7 +1031,7 @@ Every keyword can be changed in the Workflow’s Configuration.
 				<true/>
 			</dict>
 			<key>description</key>
-			<string>Leave empty for ~/.zsh_history. Set it if your HISTFILE is elsewhere.</string>
+			<string>Leave empty to use the newest of ~/.zsh_history, ~/.zhistory (Prezto), ~/.histfile and the XDG folders. Set it if your HISTFILE is elsewhere.</string>
 			<key>label</key>
 			<string>zsh history file</string>
 			<key>type</key>

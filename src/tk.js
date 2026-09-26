@@ -691,9 +691,22 @@ function warpItems(query) {
 
 const SHELLS = ["zsh", "bash", "fish", "atuin"];
 
+// Where frameworks and guides put HISTFILE: zsh's default, Prezto, zsh-newuser-install, XDG layouts.
+const ZSH_HISTFILES = [".zsh_history", ".zhistory", ".histfile", ".config/zsh/.zsh_history", ".config/zsh/.zhistory",
+  ".local/share/zsh/history", ".local/state/zsh/history", ".cache/zsh/history"];
+
 function histSources() {
-  let zshFile = expandTilde(env("zsh_histfile", "").trim()) || `${HOME}/.zsh_history`;
-  if (!zshFile.startsWith("/")) zshFile = `${HOME}/${zshFile}`; // like HISTFILE=.histfile in ~/.zshrc
+  let zshFile = expandTilde(env("zsh_histfile", "").trim());
+  if (zshFile && !zshFile.startsWith("/")) zshFile = `${HOME}/${zshFile}`; // like HISTFILE=.histfile in ~/.zshrc
+  if (!zshFile) {
+    // Not set: the most recently written of the usual places.
+    let best = null;
+    for (const f of ZSH_HISTFILES) {
+      const st = stat(`${HOME}/${f}`);
+      if (st && !st.dir && st.size > 0 && (!best || st.mtime > best.mtime)) best = { path: `${HOME}/${f}`, mtime: st.mtime };
+    }
+    zshFile = best ? best.path : `${HOME}/.zsh_history`;
+  }
   const list = [
     { kind: 0, path: zshFile },
     { kind: 1, path: `${HOME}/.bash_history` },
@@ -1538,7 +1551,8 @@ function run(argv) {
   const query = ["act", "open-dirs"].includes(cmd) ? raw : raw.normalize("NFC");
   try {
     switch (cmd) {
-      case "warp": return output(warpItems(query));
+      // Alfred learns which configurations get opened (they have uids), so the usual ones come first.
+      case "warp": return output(warpItems(query), appPath("warp") ? { skipknowledge: false } : {});
       case "hist": return output(histItems(query));
       case "ssh": return JSON.stringify({ items: sshItems(query) });
       case "tldr": {

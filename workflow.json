@@ -141,7 +141,7 @@
       "type": "textfield",
       "variable": "zsh_histfile",
       "label": "zsh history file",
-      "description": "Leave empty for ~/.zsh_history. Set it if your HISTFILE is elsewhere.",
+      "description": "Leave empty to use the newest of ~/.zsh_history, ~/.zhistory (Prezto), ~/.histfile and the XDG folders. Set it if your HISTFILE is elsewhere.",
       "config": {
         "default": "",
         "placeholder": "~/.zsh_history",

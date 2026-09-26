@@ -160,6 +160,11 @@ class WarpTests(unittest.TestCase):
         self.assertIn("Open Here in iTerm2", titles(its))
         self.assertNotIn("New Warp Tab Here", titles(its))
 
+    def test_alfred_learns_order_when_warp_is_installed(self):
+        # Audit 4: configurations have uids and Alfred's knowledge is on, so frequently used ones rise
+        self.assertFalse(sf("warp", home=self.home, TK_APPS=self.apps)["skipknowledge"])
+        self.assertTrue(sf("warp", home=self.home, TK_APPS=json.dumps({"iterm": "/Applications/iTerm.app"}))["skipknowledge"])
+
     def test_no_configs(self):
         its = items("warp", home=new_home(), TK_APPS=self.apps)
         row = find(its, "No Warp Tab Configs")
@@ -379,6 +384,18 @@ class HistoryTests(unittest.TestCase):
         home = new_home()
         write(os.path.join(home, "hist", "custom"), b": 1700000000:0;custom one\n")
         self.assertEqual(items("hist", home=home, zsh_histfile="~/hist/custom")[0]["arg"], "custom one")
+
+    def test_finds_prezto_and_xdg_history_files(self):
+        # Audit 4: without a setting, use the most recently written of the usual HISTFILE locations
+        home = new_home()
+        write(os.path.join(home, ".zsh_history"), b": 1700000000:0;old default\n")
+        os.utime(os.path.join(home, ".zsh_history"), (time.time() - 3600, time.time() - 3600))
+        write(os.path.join(home, ".zhistory"), b": 1700000000:0;prezto one\n")
+        self.assertEqual(items("hist", home=home)[0]["arg"], "prezto one")
+        home = new_home()
+        write(os.path.join(home, ".local/share/zsh/history"), b": 1700000000:0;xdg one\n")
+        self.assertEqual(items("hist", home=home)[0]["arg"], "xdg one")
+        self.assertIn("xdg one", [i["arg"] for i in items("hist", home=home, zsh_histfile="~/.local/share/zsh/history")])
 
     def test_relative_histfile_is_in_home(self):
         # Audit 1: HISTFILE=.histfile style settings are relative to the home folder
