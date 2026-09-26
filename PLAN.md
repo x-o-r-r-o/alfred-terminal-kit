@@ -17,14 +17,14 @@ Raycast demand this workflow replaces (downloads, 2026-09-26):
 **Alfred today:** No Warp workflow at all; cheat.sh (2022) and navi (2020); no shell-history search; SSH workflow from 2013.
 
 ## Features (v1.0)
-- [ ] `warp` open Warp launch configurations / new tab in folder / open current Finder folder in Warp
-- [ ] `hist <query>` fuzzy search zsh/bash/fish history, paste or run in chosen terminal
-- [ ] `tldr <cmd>` offline tldr pages (cached archive) with copyable examples
-- [ ] `ssh` hosts from ~/.ssh/config + known_hosts, open in preferred terminal
-- [ ] Terminal preference: Warp, Ghostty, iTerm2, Terminal
+- [x] `warp` open Warp Tab Configs and launch configurations / new tab or window in the Finder folder / Universal Action "Open in Terminal"
+- [x] `hist <query>` fuzzy search zsh/bash/fish/atuin history (cached index), copy, paste or run in chosen terminal
+- [x] `tldr <cmd>` offline tldr pages (cached archive, weekly refresh) with copyable examples; cheat.sh fallback
+- [x] `ssh` hosts from ~/.ssh/config (with Include) + known_hosts, open in preferred terminal
+- [x] Terminal preference: Warp, Ghostty, iTerm2, Terminal, kitty, WezTerm, Alacritty (auto-detected)
 
 ## Tech
-- **Stack:** zsh + JXA.
+- **Stack:** zsh + JXA; fixed AppleScripts that take commands as argv.
 - **Dependencies:** None. tldr pages are data, not code, so fetching them is allowed; cache them in alfred_workflow_cache.
 - Output via Alfred Script Filter JSON; settings via Workflow Configuration (`userconfigurationconfig`).
 - Secrets (API keys/tokens) in the macOS Keychain, never in `prefs.plist`.
@@ -34,21 +34,21 @@ Raycast demand this workflow replaces (downloads, 2026-09-26):
 1. Script filter prototype for the main keyword
 2. Actions + modifiers, Universal Actions / File Actions where relevant
 3. Workflow Configuration, icons, error states (no network / missing dependency)
-4. README with screenshots, `build.sh` release, forum post, then Gallery submission when invited
+4. README with screenshots, `python3 tools/build.py --package` release, forum post, then Gallery submission when invited
 
 ## Release checklist (Alfred forum + Gallery)
 Sources: alfred.app/submit, alfred.app/submit/styleguide, alfred.app/submit/screenshots, alfredforum.com topics 23976 and 23388.
 
-- [ ] README starts with `## Usage`; each paragraph ends "via the `kw` keyword" / "via the Universal Action"
+- [x] README starts with `## Usage`; each paragraph ends "via the `kw` keyword" / "via the Universal Action"
 - [ ] A clean screenshot (window only, transparent background, real-looking data, no other workflows) after each paragraph, stored in `images/`
-- [ ] Modifiers listed as `* <kbd>⌘</kbd><kbd>↩</kbd> Action.`; Quick Look written as <kbd>⌘</kbd><kbd>Y</kbd>
-- [ ] `## Setup` only for genuine manual steps (no app installs or API keys; the Gallery lists those)
-- [ ] Every keyword is ≥ 3 characters and configurable via `{var:keyword_*}`
-- [ ] Settings in Workflow Configuration; the info.plist `readme` (About This Workflow) matches README.md
-- [ ] Main icon ≥ 256×256 px
-- [ ] No self-updater; never download or install software (no pip/brew/curl of binaries); dependencies declared for Alfred to handle
-- [ ] Any compiled binary is Developer ID signed + notarised; never strip quarantine
-- [ ] No hard-coded paths; `prefs.plist` is git-ignored; secrets stay in Keychain
+- [x] Modifiers listed as `* <kbd>⌘</kbd><kbd>↩</kbd> Action.`; Quick Look written as <kbd>⌘</kbd><kbd>Y</kbd>
+- [x] `## Setup` only for genuine manual steps (no app installs or API keys; the Gallery lists those)
+- [x] Every keyword is ≥ 3 characters and configurable via `{var:keyword_*}`
+- [x] Settings in Workflow Configuration; the info.plist `readme` (About This Workflow) matches README.md
+- [x] Main icon ≥ 256×256 px
+- [x] No self-updater; never download or install software (no pip/brew/curl of binaries); dependencies declared for Alfred to handle
+- [x] Any compiled binary is Developer ID signed + notarised; never strip quarantine
+- [x] No hard-coded paths; `prefs.plist` is git-ignored; secrets stay in Keychain
 - [ ] AI assistance disclosed in the README and the forum post
-- [ ] Version bumped in `src/info.plist`; `./build.sh`; GitHub release with the `.alfredworkflow` attached
+- [ ] Version bumped in `src/info.plist`; `python3 tools/build.py --package`; GitHub release with the `.alfredworkflow` attached
 - [ ] Forum post in "Share your Workflows" with a screenshot, keywords, and the GitHub link

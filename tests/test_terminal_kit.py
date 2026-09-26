@@ -160,6 +160,18 @@ class WarpTests(unittest.TestCase):
         self.assertEqual(find(its, "Preview One")["arg"], "warppreview://launch/Preview%20One")
         self.assertIn("New Warp Tab Here", titles(its))
 
+    def test_decomposed_file_names_and_huge_files(self):
+        # Audit 3: NFD names match NFC queries; only the start of a huge config file is read
+        home = new_home()
+        lc = os.path.join(home, ".warp", "launch_configurations")
+        write(f"{lc}/re\u0301sume\u0301.yaml", "windows: []\n")
+        write(f"{lc}/huge.yaml", "name: Huge One\n" + "# padding\n" * 2_000_000)
+        t = time.time()
+        its = items("warp", "résumé", home=home, TK_APPS=self.apps)
+        self.assertEqual(its[0]["title"], "re\u0301sume\u0301")
+        self.assertEqual(find(items("warp", "huge", home=home, TK_APPS=self.apps), "Huge One")["arg"], "warp://launch/Huge%20One")
+        self.assertLess(time.time() - t, 2)
+
     def test_unicode_quotes_query(self):
         for q in ['"', "'; do shell script \"x\"", "ü\nnew", "\\"]:
             items("warp", q, home=self.home, TK_APPS=self.apps)
@@ -293,6 +305,18 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(items("hist", "l[x]", home=home)[0]["arg"], "ls [x]")
         self.assertEqual(items("hist", "c(y)", home=home)[0]["arg"], "cat (y)")
         self.assertEqual(items("hist", "e\\", home=home)[0]["title"], "No command matches “e\\”")
+
+    def test_unicode_normalization(self):
+        # Audit 3: decomposed (NFD) text and queries match their composed (NFC) forms
+        home = self.home_with(zsh="cd Mu\u0308ller\nls café\n".encode())
+        self.assertEqual(items("hist", "müller", home=home)[0]["arg"], "cd Mu\u0308ller")  # arg unchanged
+        self.assertEqual(items("hist", "cafe\u0301", home=home)[0]["arg"], "ls café")
+
+    def test_control_characters_in_titles(self):
+        # Audit 3: escape sequences in history don't reach Alfred's titles, but stay in the command
+        its = items("hist", home=self.home_with(zsh=b"printf '\x1b[31mred\x1b[0m'\x07\n"))
+        self.assertEqual(its[0]["title"], "printf '[31mred[0m'")
+        self.assertEqual(its[0]["arg"], "printf '\x1b[31mred\x1b[0m'\x07")
 
     def test_search(self):
         zsh = b"".join(f": {1700000000 + i}:0;{c}\n".encode() for i, c in enumerate(
@@ -772,6 +796,13 @@ class TldrTests(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url)[0]["title"], "tar")
+
+    def test_spawn_failure_does_not_leave_a_lock(self):
+        # Audit 3: if the background download can't start, show the error instead of "Downloading…"
+        cache = new_cache()
+        its = items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url, TK_NOHUP="/nonexistent/nohup")
+        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
+        self.assertFalse(os.path.exists(os.path.join(cache, "tldr", ".lock")))
 
     def test_download_failure_and_retry(self):
         cache = new_cache()

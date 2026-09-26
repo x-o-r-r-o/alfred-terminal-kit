@@ -29,7 +29,7 @@ Search the history of zsh, bash, fish and atuin via the `hist` keyword. Commands
 
 ### tldr Pages
 
-Read practical examples for a command via the `tldr` keyword, like `tldr tar`. Pages are downloaded once (about 3 MB) and refresh weekly in the background, so they work offline. Add words to filter the examples (`tldr git stash apply`), or type part of a name to find pages.
+Read practical examples for a command, like `tldr tar`, via the `tldr` keyword. Pages are downloaded once (about 3 MB) and refresh weekly in the background, so they work offline. Add words to filter the examples (`tldr git stash apply`), or type part of a name to find pages.
 
 ![tldr examples for tar](images/tldr.png)
 

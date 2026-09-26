@@ -93,8 +93,20 @@ function readTailLatin1(path, max) {
   return nl < 0 ? t : t.slice(nl + 1);
 }
 
-function readText(path) {
-  const raw = readLatin1(path);
+// The first `max` bytes of a file, as Latin-1 (for configuration files that could be huge).
+function readHeadLatin1(path, max) {
+  const st = stat(path);
+  if (!st || st.size <= max) return readLatin1(path);
+  const fh = $.NSFileHandle.fileHandleForReadingAtPath(path);
+  if (fh.isNil()) return null;
+  const data = fh.readDataOfLength(max);
+  fh.closeFile;
+  const s = $.NSString.alloc.initWithDataEncoding(data, $.NSISOLatin1StringEncoding);
+  return s.isNil() ? null : s.js;
+}
+
+function readText(path, max = 0) {
+  const raw = max ? readHeadLatin1(path, max) : readLatin1(path);
   return raw === null ? null : decodeUTF8(raw).replace(/^﻿/, "");
 }
 
@@ -120,7 +132,8 @@ function tildify(p) {
 }
 
 function oneLine(s, max = 200) {
-  const t = String(s).replace(/\r?\n/g, " ⏎ ").replace(/\s+/g, " ").trim();
+  // Control characters (escape sequences in history, say) would garble Alfred's rows.
+  const t = String(s).replace(/\r?\n/g, " ⏎ ").replace(/\s+/g, " ").replace(/[\x00-\x1f\x7f]/g, "").trim();
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
@@ -171,7 +184,7 @@ function exec(path, args, { wait = true, input = null } = {}) {
 // Fuzzy score: higher is better, 0 = no match.
 function score(text, query) {
   if (!query) return 1;
-  const t = text.toLowerCase();
+  const t = text.normalize("NFC").toLowerCase(); // file names are often decomposed (NFD)
   const q = query.toLowerCase().trim();
   if (t === q) return 100;
   if (t.startsWith(q)) return 80;
@@ -491,7 +504,7 @@ function warpConfigs() {
     const path = `${tabDir}/${f}`;
     if (isDir(path)) continue;
     const stem = f.replace(/\.toml$/i, "");
-    const name = tomlName(readText(path)) || stem;
+    const name = tomlName(readText(path, 65536)) || stem;
     out.push({ kind: "tab", name, path, uri: `${scheme}://tab_config/${encodeURIComponent(stem)}` });
   }
   const lcDir = `${base}/launch_configurations`;
@@ -499,7 +512,7 @@ function warpConfigs() {
     if (!/\.ya?ml$/i.test(f) || f.startsWith(".")) continue;
     const path = `${lcDir}/${f}`;
     if (isDir(path)) continue;
-    const name = yamlName(readText(path));
+    const name = yamlName(readText(path, 65536));
     // Warp matches the `name:` field (warpdotdev/warp#15003); the path is the documented fallback.
     out.push({ kind: "launch", name: name || f.replace(/\.ya?ml$/i, ""), path, uri: `${scheme}://launch/${encodeURIComponent(name || path)}`, unnamed: !name });
   }
@@ -760,10 +773,13 @@ function histSearch(entries, query, limit) {
   if (!q) return entries.slice(0, limit);
   const words = q.split(/\s+/);
   const tiers = [[], [], [], []];
+  // Decomposed text (é as e + ◌́, from file names) only needs normalizing for non-ASCII queries.
+  const nonAscii = /[^\x00-\x7f]/.test(q);
   // Letters in order ("kgp" -> kubectl get pods); a regex is much faster than a loop in JXA.
   const fuzzy = new RegExp(Array.from(q.replace(/\s+/g, "")).map((c) => c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")).join(".*?"));
   for (const e of entries) {
-    const l = e[0].toLowerCase();
+    let l = e[0].toLowerCase();
+    if (nonAscii && /[\u0300-\u036f\u3099\u309a]/.test(l)) l = l.normalize("NFC");
     if (l.startsWith(q)) {
       tiers[0].push(e);
       if (tiers[0].length >= limit) break;
@@ -860,7 +876,11 @@ function startUpdate(base, langs, force) {
   writeFile(attempt, String(Math.floor(now())));
   const args = ["-f", `${CWD}/tldr-update.sh`, base, ...langs];
   if (env("TK_SYNC_UPDATE", "") === "1") exec("/bin/zsh", args);
-  else exec("/usr/bin/nohup", ["/bin/zsh", ...args], { wait: false });
+  else if (!exec(env("TK_NOHUP", "/usr/bin/nohup"), ["/bin/zsh", ...args], { wait: false }).ok) {
+    // Nothing started: don't leave a lock that would show "Downloading…" for ten minutes.
+    FM.removeItemAtPathError(lock, $());
+    writeFile(`${base}/en.error`, "Couldn't start the download");
+  }
 }
 
 function tldrIndex(base, lang) {
@@ -1405,7 +1425,9 @@ function act(arg) {
 
 function run(argv) {
   const [cmd, ...rest] = argv;
-  const query = rest.join(" ");
+  const raw = rest.join(" ");
+  // Script Filter queries are compared as NFC; actions keep their argument byte for byte.
+  const query = ["act", "open-dirs"].includes(cmd) ? raw : raw.normalize("NFC");
   try {
     switch (cmd) {
       case "warp": return output(warpItems(query));
@@ -1415,8 +1437,8 @@ function run(argv) {
         const r = tldrItems(query);
         return output(r.items, r.rerun ? { rerun: r.rerun } : {});
       }
-      case "act": return act(query);
-      case "open-dirs": return openDirs(query);
+      case "act": return act(raw);
+      case "open-dirs": return openDirs(raw);
       default: return output([info(`Unknown command: ${cmd}`, "", "error")]);
     }
   } catch (e) {
