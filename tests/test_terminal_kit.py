@@ -72,6 +72,28 @@ def jxa(code, **env):
     return json.loads(out.stdout)
 
 
+def toml_loads(text):
+    """tomllib on Python 3.11+; on the system Python 3.9 a parser for the small Tab Configs tk.js writes
+    (basic strings use the JSON escapes \\" \\\\ \\t \\n \\uXXXX)."""
+    try:
+        import tomllib
+        return tomllib.loads(text)
+    except ImportError:
+        pass
+    out, cur = {}, None
+    for line in text.split("\n"):
+        if not line.strip():
+            continue
+        if line == "[[panes]]":
+            cur = {}
+            out.setdefault("panes", []).append(cur)
+            continue
+        k, v = line.split(" = ", 1)
+        v = json.loads(v)
+        (cur if cur is not None else out)[k] = v
+    return out
+
+
 def validate(data):
     assert isinstance(data.get("items"), list)
     for it in data["items"]:
@@ -578,7 +600,6 @@ class LauncherTests(unittest.TestCase):
 
     def test_warp_runs_commands_with_a_tab_config(self):
         # Audit 4: Warp 2026.05.20+ runs the command from a temporary Tab Config: no clipboard, no keystrokes
-        import tomllib
         home = new_home()
         cmd = self.NASTY + "\x01\x7f\t{{name}} \\{{x}} \"q\" 😀"
         steps, _ = act("run", cmd, TK_APPS=self.apps("warp"), terminal="warp", TK_APP_VERSION="0.2026.05.20.09.21.00", home=home)
@@ -588,7 +609,7 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(stem.startswith("terminal-kit-run-"), stem)
         self.assertEqual(os.path.dirname(s["file"]), os.path.join(home, ".warp", "tab_configs"))
         self.assertEqual(s["url"], f"warp://tab_config/{stem}")  # Warp isn't running: a tab in its first window
-        cfg = tomllib.loads(s["toml"])
+        cfg = toml_loads(s["toml"])
         self.assertEqual(cfg, {"name": "Terminal Kit", "panes": [{"id": "main", "type": "terminal", "directory": home, "commands": [cmd]}]})
         self.assertFalse(os.path.exists(s["file"]))  # dry run: nothing written
         steps, _ = act("run", "ls", TK_APPS=self.apps("warp"), terminal="warp", warp_release="preview", TK_APP_VERSION="0.2026.06.03.09.49.00", home=home)
@@ -610,7 +631,8 @@ class LauncherTests(unittest.TestCase):
         mine = write(os.path.join(tc, "mine.toml"), 'name = "Mine"\n')
         os.utime(mine, (time.time() - 600, time.time() - 600))
         log = os.path.join(TMP, "nohup-args.txt")
-        fake = write(os.path.join(TMP, "fake-nohup"), f'#!/bin/sh\nprintf "%s\\n" "$@" > {log!r}\n')
+        # Written to a temporary file and renamed: the test never reads a half-written log.
+        fake = write(os.path.join(TMP, "fake-nohup"), f'#!/bin/sh\nprintf "%s\\n" "$@" > {log!r}.tmp && mv {log!r}.tmp {log!r}\n')
         os.chmod(fake, 0o755)
         r = jxa('JSON.stringify(warpTabConfig(plan("warp", "echo hi", HOME)[0]))', TK_HOME=home, TK_NOHUP=fake,
                 TK_APPS=json.dumps({"warp": "/Applications/Warp.app"}), TK_APP_VERSION="0.2026.05.20.09.21.00", TK_DRY_RUN="1")
@@ -621,7 +643,7 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(os.path.exists(mine))  # the user's own configs are never touched
         path = os.path.join(tc, files[0])
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-        for _ in range(50):
+        for _ in range(300):  # a loaded machine can take a while to start the process
             if os.path.exists(log):
                 break
             time.sleep(0.1)
@@ -933,7 +955,7 @@ class TldrTests(unittest.TestCase):
         data = sf("tldr", "tar", cache=cache, TK_TLDR_URL=self.url)
         self.assertEqual(data["items"][0]["title"], "Downloading tldr pages…")
         self.assertEqual(data["rerun"], 0.5)
-        for _ in range(100):
+        for _ in range(300):  # the background download; slow on a loaded machine
             if os.path.exists(os.path.join(cache, "tldr", "en.stamp")) and not os.path.exists(os.path.join(cache, "tldr", ".lock")):
                 break
             time.sleep(0.1)
@@ -1254,6 +1276,126 @@ class FinalReviewTests(unittest.TestCase):
         for bad in ["null", "[]", json.dumps({"stamp": stamp, "platforms": None}), json.dumps({"stamp": stamp, "platforms": {"common": 5}})]:
             write(idx, bad)
             self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=url)[0]["title"], "tar", bad)
+
+
+# ---------------------------------------------------------------- round 4: Alfred's real runtime
+
+def alfred_env(home, **extra):
+    """The environment Alfred gives scripts: no LANG/LC_*, no Homebrew, Alfred's own paths (with spaces)."""
+    bid = "io.github.x-o-r-r-o.terminal-kit"
+    e = dict(HOME=home, USER=os.environ.get("USER", "user"), TMPDIR=os.environ.get("TMPDIR", "/tmp"),
+             PATH="/usr/bin:/bin:/usr/sbin:/sbin", alfred_version="5.6", alfred_version_build="2290", alfred_debug="1",
+             alfred_theme_subtext="0", alfred_workflow_bundleid=bid, alfred_workflow_name="Terminal Kit",
+             alfred_workflow_uid="user.workflow.TEST", alfred_workflow_version="1.0.0",
+             alfred_preferences=os.path.join(home, "Library/Application Support/Alfred/Alfred.alfredpreferences"),
+             alfred_workflow_data=os.path.join(home, "Library/Application Support/Alfred/Workflow Data", bid),
+             alfred_workflow_cache=os.path.join(home, "Library/Caches/com.runningwithcrayons.Alfred/Workflow Data", bid))
+    e.update(SAFE, TK_FINDER_DIR="", TK_APPS=NO_APPS)
+    e.update(extra)
+    return e
+
+
+def plist_script(obj_id):
+    with open(os.path.join(ROOT, "workflow.json"), encoding="utf-8") as f:
+        return next(o["script"] for o in json.load(f)["objects"] if o["id"] == obj_id)
+
+
+def alfred_run(obj_id, args, home, **extra):
+    """Run an object's script exactly as Alfred does: /bin/bash -c <script> with the input as argv."""
+    out = subprocess.run(["/bin/bash", "-c", plist_script(obj_id), "bash", *args], cwd=SRC, env=alfred_env(home, **extra),
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    return out
+
+
+class AlfredRuntimeTests(unittest.TestCase):
+    def test_every_script_filter_on_a_fresh_install(self):
+        home = new_home()
+        write(os.path.join(home, ".zsh_history"), meta(": 1700000000:0;ls ~/Документы\n".encode()))
+        for sf_id, query in [("sf_warp", ""), ("sf_hist", ""), ("sf_hist", "докум"), ("sf_ssh", ""), ("sf_tldr", "tar")]:
+            data = json.loads(alfred_run(sf_id, [query], home).stdout)
+            validate(data)
+        self.assertTrue(os.path.isdir(alfred_env(home)["alfred_workflow_cache"]))
+        data = json.loads(alfred_run("sf_hist", ["докум"], home).stdout)
+        self.assertEqual(data["items"][0]["arg"], "ls ~/Документы")
+
+    def test_long_command_resolves_from_a_cache_path_with_spaces(self):
+        home = new_home()
+        cmd = "echo " + "ü" * 30000
+        write(os.path.join(home, ".bash_history"), cmd + "\n")
+        arg = json.loads(alfred_run("sf_hist", [""], home).stdout)["items"][0]["arg"]
+        self.assertTrue(arg.startswith("tkfile:") and " " in arg, arg)
+        self.assertEqual(alfred_run("resolve", [arg], home).stdout, cmd)
+
+    def test_universal_action_passes_every_folder(self):
+        # Alfred gives a script with argv one argument per selected item (alfredapp/simple-diff-workflow
+        # checks "$#" -eq 2 after a multi-item Universal Action).
+        home = new_home()
+        dirs = [os.path.join(home, n) for n in ("a dir", "b 'ü'", "c\ttab")]
+        for d in dirs:
+            os.makedirs(d)
+        out = alfred_run("open_dirs", dirs, home, TK_DRY_RUN="1", TK_APPS=json.dumps({"iterm": "/Applications/iTerm.app"}), terminal="iterm")
+        logs = [json.loads(l) for l in out.stderr.splitlines() if l.startswith("{")]
+        self.assertEqual([l["steps"][0]["argv"][-1] for l in logs], dirs)
+        # the old tab-separated form still works
+        out = alfred_run("open_dirs", ["\t".join(dirs[:2])], home, TK_DRY_RUN="1", TK_APPS=json.dumps({"iterm": "/Applications/iTerm.app"}), terminal="iterm")
+        self.assertEqual([json.loads(l)["steps"][0]["argv"][-1] for l in out.stderr.splitlines() if l.startswith("{")], dirs[:2])
+
+    def test_actions_print_nothing_on_success(self):
+        # The Notification object only shows when its input is populated: a success must print no
+        # bytes at all (a JXA run() that returns "" still prints a newline).
+        home = new_home()
+        for obj_id, args, extra in [("act", ["https://example.com"], dict(tk_action="url")),
+                                    ("act", ["ls"], dict(tk_action="run")),
+                                    ("open_dirs", [home], {})]:
+            out = alfred_run(obj_id, args, home, TK_DRY_RUN="1", **extra)
+            self.assertEqual(out.stdout, "", obj_id)
+        self.assertEqual(alfred_run("act", ["   "], home, TK_DRY_RUN="1", tk_action="run").stdout.strip(), "Nothing to run")
+
+    def test_plain_utf8_zsh_history_is_not_unmetafied(self):
+        # A history file edited or merged by another tool holds plain UTF-8, where 0x83 is a normal byte
+        # ("у" is d1 83, "ă" is c4 83). Lines zsh wrote itself in the same file are still unmetafied.
+        data = (": 1700000000:0;ls ~/Документы\n: 1700000001:0;echo ă\n".encode()
+                + meta(": 1700000002:0;echo Ġ ă\n".encode()) + ": 1700000003:0;\xff\x83 bad\n".encode("latin-1"))
+        its = items("hist", home=HistoryTests().home_with(zsh=data), hist_dedupe="0")
+        self.assertEqual([i["arg"] for i in its][1:], ["echo Ġ ă", "echo ă", "ls ~/Документы"])
+        self.assertEqual(its[0]["arg"], "\xff\x00bad")  # what zsh reads too: 0x83 + " " is a metafied NUL
+
+    def test_checkbox_values(self):
+        home = HistoryTests().home_with(bash="ls\nls\n")
+        for value, count in [("1", 1), ("0", 2), ("true", 1), ("false", 2), ("", 1), (" 0 ", 2)]:
+            self.assertEqual(len(items("hist", home=home, hist_dedupe=value)), count, value)
+
+    def test_histfile_setting_forms_and_missing_file(self):
+        home = new_home()
+        write(os.path.join(home, "zdot", ".zsh_history"), ": 1700000000:0;echo custom\n")
+        for value in ["~/zdot/.zsh_history", "$HOME/zdot/.zsh_history", '"${HOME}/zdot/.zsh_history"', " zdot/.zsh_history "]:
+            self.assertEqual(items("hist", home=home, zsh_histfile=value)[0]["arg"], "echo custom", value)
+        its = items("hist", home=home, zsh_histfile="~/nope/.zsh_history")
+        self.assertEqual(its[0]["title"], "zsh history file not found: ~/nope/.zsh_history")
+        self.assertIs(its[0]["valid"], False)
+
+    def test_hide_commands_with(self):
+        home = HistoryTests().home_with(bash="export API_TOKEN=abc\nvault login -method=x\nls\n")
+        self.assertEqual([i["arg"] for i in items("hist", home=home, hist_ignore=" Token= , VAULT ")], ["ls"])
+        self.assertEqual(len(items("hist", home=home)), 3)
+
+    def test_run_in_finder_folder(self):
+        home = new_home()
+        folder = os.path.join(home, "it's here")
+        os.makedirs(folder)
+        its = items("hist", home=HistoryTests().home_with(bash="make\n"))
+        self.assertEqual(its[0]["mods"]["ctrl"]["variables"]["tk_action"], "run-here")
+        steps, _ = act("run-here", "make", home=home, TK_FINDER_DIR=folder)
+        self.assertEqual(steps["steps"][0]["argv"], ["cd '" + folder.replace("'", "'\\''") + "' && make"])
+        steps, _ = act("run-here", "make", home=home, TK_FINDER_DIR=folder, TK_APPS=json.dumps({"kitty": "/Applications/kitty.app"}), terminal="kitty")
+        self.assertIn(folder, steps["steps"][0]["argv"])
+        steps, _ = act("run-here", "make", home=home, TK_FINDER_DIR="")  # no Finder window: the home folder
+        self.assertEqual(steps["steps"][0]["argv"], ["make"])
+        # Script Filter connections: ⌃ is wired for hist
+        with open(os.path.join(ROOT, "workflow.json"), encoding="utf-8") as f:
+            conns = json.load(f)["connections"]
+        self.assertIn({"from": "sf_hist", "to": "route", "mod": "ctrl"}, conns)
 
 
 def tearDownModule():

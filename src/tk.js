@@ -3,7 +3,7 @@
 // Usage: osascript -l JavaScript tk.js <command> [query]
 //   warp | hist | tldr | ssh   Script Filters
 //   act                        run the action named by $tk_action on the argument
-//   open-dirs                  open folders (tab-separated) in the preferred terminal
+//   open-dirs <path>...        open folders (one per argument, or tab-separated) in the preferred terminal
 // Untrusted strings (commands, paths, host names) never become part of AppleScript or shell
 // source: they are passed as argv to fixed scripts in ./applescript and ./runner.sh.
 ObjC.import("Foundation");
@@ -14,6 +14,14 @@ const ENV = $.NSProcessInfo.processInfo.environment;
 function env(name, fallback) {
   const v = ENV.objectForKey(name);
   return v.isNil() ? fallback : v.js;
+}
+
+// A Workflow Configuration checkbox: Alfred passes "1" or "0"; anything else (unset, empty) is the default.
+function flag(name, fallback) {
+  const v = String(env(name, "")).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return fallback;
 }
 
 // TK_HOME replaces $HOME for every file the workflow reads (used by the test suite).
@@ -400,10 +408,12 @@ function plan(term, cmd, dir) {
   dir = dir || HOME;
   const runner = `${CWD}/runner.sh`;
   const viaRunner = () => ["/bin/zsh", "-f", runner, dir, commandFile(cmd)];
+  // Terminal and iTerm2 type the command into a new shell in the home folder: change folder first.
+  const typed = cmd && dir !== HOME ? `cd ${shq(dir)} && ${cmd}` : cmd;
   switch (term) {
     case "iterm":
       if (!cmd) return [{ type: "exec", argv: ["/usr/bin/open", "-a", app, dir] }];
-      return [{ type: "applescript", script: "iterm", argv: [cmd, tab ? "tab" : "window"] }];
+      return [{ type: "applescript", script: "iterm", argv: [typed, tab ? "tab" : "window"] }];
     case "ghostty":
       if (versionAtLeast(appVersion(app), "1.3")) {
         return [{ type: "applescript", script: "ghostty", argv: [dir, cmd || "", tab ? "tab" : "window"] }];
@@ -434,7 +444,7 @@ function plan(term, cmd, dir) {
       return [{ type: "exec", argv: ["/usr/bin/open", "-na", app, "--args", "--working-directory", dir, ...(cmd ? ["-e", ...viaRunner()] : [])] }];
     default:
       if (!cmd) return [{ type: "exec", argv: ["/usr/bin/open", "-a", app, dir] }];
-      return [{ type: "applescript", script: "terminal", argv: [cmd] }];
+      return [{ type: "applescript", script: "terminal", argv: [typed] }];
   }
 }
 
@@ -749,9 +759,17 @@ const SHELLS = ["zsh", "bash", "fish", "atuin"];
 const ZSH_HISTFILES = [".zsh_history", ".zhistory", ".histfile", ".config/zsh/.zsh_history", ".config/zsh/.zhistory",
   ".local/share/zsh/history", ".local/state/zsh/history", ".cache/zsh/history"];
 
+// The zsh history file set in the Workflow's Configuration: "~/…", "$HOME/…" or "${HOME}/…" (as copied
+// from a HISTFILE= line, quotes included), or relative to the home folder. Empty when not set.
+function configuredZshHistfile() {
+  let f = env("zsh_histfile", "").trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+  f = expandTilde(f.replace(/^\$(?:HOME\b|\{HOME\})/, "~"));
+  if (f && !f.startsWith("/")) f = `${HOME}/${f}`; // like HISTFILE=.histfile in ~/.zshrc
+  return f;
+}
+
 function histSources() {
-  let zshFile = expandTilde(env("zsh_histfile", "").trim());
-  if (zshFile && !zshFile.startsWith("/")) zshFile = `${HOME}/${zshFile}`; // like HISTFILE=.histfile in ~/.zshrc
+  let zshFile = configuredZshHistfile();
   if (!zshFile) {
     // Not set: the most recently written of the usual places.
     let best = null;
@@ -766,7 +784,7 @@ function histSources() {
     { kind: 1, path: `${HOME}/.bash_history` },
     { kind: 2, path: `${HOME}/.local/share/fish/fish_history` },
   ];
-  if (env("hist_atuin", "1") !== "0") list.push({ kind: 3, path: `${HOME}/.local/share/atuin/history.db` });
+  if (flag("hist_atuin", true)) list.push({ kind: 3, path: `${HOME}/.local/share/atuin/history.db` });
   const out = [];
   for (const s of list) {
     const st = stat(s.path);
@@ -789,6 +807,29 @@ function unmetafy(raw) {
   return raw.indexOf("\x83") < 0 ? raw : raw.replace(/\x83([^\n])/g, (m, c) => String.fromCharCode(c.charCodeAt(0) ^ 0x20));
 }
 
+// Bytes of a zsh history file -> text. zsh itself always writes metafied lines, but files edited or
+// merged by other tools (a text editor, a script, `echo … >> ~/.zsh_history`) can hold plain UTF-8,
+// where 0x83 is an ordinary continuation byte (the "у" in "Документы" is d1 83). Per line: unmetafy
+// when the result is valid UTF-8, else keep the line as plain UTF-8 if that is valid; a metafied line
+// is practically never valid UTF-8 before unmetafying, and a plain one practically never after.
+function decodeZsh(raw) {
+  if (raw.indexOf("\x83") < 0) return decodeUTF8(raw);
+  const utf8 = (s) => {
+    try {
+      return decodeURIComponent(escape(s));
+    } catch (e) {
+      return null;
+    }
+  };
+  const whole = /[\x80-\xff]/.test(raw) ? utf8(unmetafy(raw)) : unmetafy(raw);
+  if (whole !== null) return whole;
+  return raw.split("\n").map((l) => {
+    if (l.indexOf("\x83") < 0) return utf8(l) ?? l;
+    const u = unmetafy(l);
+    return utf8(u) ?? utf8(l) ?? u;
+  }).join("\n");
+}
+
 // One history entry, like zsh's readhistfile(): ": <start>:<elapsed>;<command>" (EXTENDED_HISTORY),
 // or a plain command where a leading ":" was written as "\:".
 function zshEntry(buf) {
@@ -804,7 +845,7 @@ function zshEntry(buf) {
 // Returns [[command, time (0 if unknown)], …] oldest first. Mirrors readhistline() in zsh's Src/hist.c:
 // a line that ends with a backslash continues on the next line (zsh writes a newline as "\\\n").
 function parseZsh(raw) {
-  const lines = decodeUTF8(unmetafy(raw)).split("\n");
+  const lines = decodeZsh(raw).split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
   const out = [];
   let buf = null;
@@ -888,8 +929,9 @@ function parseAtuin(path) {
 // Newest first, deduplicated: [[command, time, shell], …]. Cached by the sources' mtime and size.
 function histIndex() {
   const sources = histSources();
-  const dedupe = env("hist_dedupe", "1") !== "0";
-  const sig = JSON.stringify([3, dedupe, sources.map((s) => [s.kind, s.path, s.mtime, s.size])]);
+  const dedupe = flag("hist_dedupe", true);
+  const ignore = histIgnore();
+  const sig = JSON.stringify([3, dedupe, ignore, sources.map((s) => [s.kind, s.path, s.mtime, s.size])]);
   const dir = cacheDir();
   const sigPath = `${dir}/hist-index.sig`, dataPath = `${dir}/hist-index.json`;
   if (readUTF8(sigPath) === sig) {
@@ -931,6 +973,10 @@ function histIndex() {
   const entries = [];
   for (const e of all) {
     const key = e[0].trim();
+    if (ignore.length) {
+      const l = key.toLowerCase();
+      if (ignore.some((w) => l.includes(w))) continue;
+    }
     if (dedupe) {
       if (seen.has(key)) continue;
       seen.add(key);
@@ -941,6 +987,11 @@ function histIndex() {
   writeFile(dataPath, JSON.stringify({ warnings: HIST_WARNINGS, entries }));
   writeFile(sigPath, sig);
   return { entries, sources };
+}
+
+// Commands that contain any of these (comma-separated, any case) never show up, say "token=" or "vault ".
+function histIgnore() {
+  return env("hist_ignore", "").split(",").map((w) => w.trim().toLowerCase()).filter(Boolean).sort();
 }
 
 function histSearch(entries, query, limit) {
@@ -997,8 +1048,13 @@ function histItems(query) {
       mods: {
         cmd: { arg, subtitle: "Paste into the frontmost app", variables: { tk_action: "paste" } },
         alt: { arg, subtitle: `Run in a new ${term} ${opensTab(preferredTerminal()) ? "tab" : "window"}`, variables: { tk_action: "run" } },
+        ctrl: { arg, subtitle: `Run in ${term} in the frontmost Finder folder`, variables: { tk_action: "run-here" } },
       },
     });
+  }
+  const configured = configuredZshHistfile();
+  if (configured && !sources.some((s) => s.kind === 0)) {
+    items.push(info(`zsh history file not found: ${tildify(configured)}`, "Check “zsh history file” in the Workflow’s Configuration, or leave it empty", "error"));
   }
   for (const w of HIST_WARNINGS) items.push(info(w, "", "error"));
   if (!items.length) {
@@ -1184,7 +1240,7 @@ function parsePage(md) {
 function tldrItems(query) {
   const langs = tldrLangs();
   const base = tldrBase();
-  const cheat = env("tldr_cheatsh", "1") !== "0";
+  const cheat = flag("tldr_cheatsh", true);
   const q = query.replace(/\s+/g, " ").trim();
   const cm = /^(.*?)\s*@cheat$/i.exec(q);
   if (cm && cheat) return cheatItems(cm[1]);
@@ -1481,7 +1537,7 @@ function sshHosts() {
   const cfg = `${HOME}/.ssh/config`;
   parseSshConfig(cfg, 0, new Set(), hosts, []);
   const list = [...hosts.values()].map((h) => Object.assign(h, { source: "config" }));
-  if (env("ssh_known_hosts", "1") !== "0") {
+  if (flag("ssh_known_hosts", true)) {
     const known = new Set(list.map((h) => `${(h.hostname || h.alias).toLowerCase()}:${h.port || "22"}`));
     const kh = `${HOME}/.ssh/known_hosts`;
     const text = readText(kh);
@@ -1564,9 +1620,12 @@ function sshItems(query) {
 
 // ---------- actions ----------
 
-function openDirs(arg) {
+// Alfred passes several selected items as separate arguments to a script that takes argv, and as one
+// tab-separated string through {query}: accept both.
+function openDirs(args) {
   const dirs = [];
-  for (const p of String(arg).split("\t").map((s) => s.trim()).filter(Boolean)) {
+  const paths = [].concat(...[].concat(args).map((a) => exists(String(a)) ? [String(a)] : String(a).split("\t")));
+  for (const p of paths.map((s) => s.trim()).filter(Boolean)) {
     const d = isDir(p) ? p : p.replace(/\/[^/]*$/, "") || "/";
     if (isDir(d) && !dirs.includes(d)) dirs.push(d);
   }
@@ -1596,6 +1655,8 @@ function act(arg) {
     case "run":
     case "ssh":
       return arg.trim() ? launch(arg, HOME) : "Nothing to run";
+    case "run-here":
+      return arg.trim() ? launch(arg, finderFolder() || HOME) : "Nothing to run";
     case "open-dir":
       return openDirs(arg);
     case "warp-tab":
@@ -1646,7 +1707,7 @@ function run(argv) {
         return output(r.items, r.rerun ? { rerun: r.rerun } : {});
       }
       case "act": return act(raw);
-      case "open-dirs": return openDirs(raw);
+      case "open-dirs": return openDirs(rest);
       default: return output([info(`Unknown command: ${cmd}`, "", "error")]);
     }
   } catch (e) {

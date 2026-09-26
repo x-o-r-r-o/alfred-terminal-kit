@@ -23,6 +23,27 @@ Raycast demand this workflow replaces (downloads, 2026-09-26):
 - [x] `ssh` hosts from ~/.ssh/config (with Include) + known_hosts, open in preferred terminal
 - [x] Terminal preference: Warp, Ghostty, iTerm2, Terminal, kitty, WezTerm, Alacritty (auto-detected)
 
+## Round 4 (post-release audit, v1.0.1 candidate)
+- [x] Universal Action with several folders: Alfred passes each item as its own argument; only the first was opened (`"$1"` → `"$@"`).
+- [x] zsh history edited or merged by other tools (plain UTF-8 with 0x83 bytes, e.g. Cyrillic) is no longer garbled by unmetafying.
+- [x] Checkboxes also accept "true"/"false"; `zsh history file` accepts `$HOME/…`, `${HOME}/…` and quotes, and says when the file doesn't exist.
+- [x] Terminal and iTerm2 honour the folder when running a command outside the home folder.
+- [x] New: <kbd>⌃</kbd><kbd>↩</kbd> on a history entry runs it in the frontmost Finder folder.
+- [x] New: "Hide commands with" setting keeps commands with secrets out of the history list.
+- [x] Tests run on the system Python 3.9 (no `tomllib`) and under Alfred's minimal environment.
+
+## Ideas for v1.1
+Ranked by value for effort; none implemented yet.
+1. Warp Workflows (`~/.warp/workflows/*.yaml`) in the `warp` list: copy or run the command with its arguments filled in (Raycast users asked for "launch workflows").
+2. `hist` shell filter in the query (`zsh: git`, `bash: …`) and a per-shell toggle in the Workflow’s Configuration.
+3. `ssh`: <kbd>⌃</kbd><kbd>↩</kbd> to open the host in Finder via SFTP (`sftp://`), or with Transmit/Cyberduck when installed; show `Host *` defaults (User) in subtitles.
+4. `ssh`: read `/etc/ssh/ssh_config` Includes and the `Match host` blocks' HostName for subtitles.
+5. `tldr`: <kbd>⌘</kbd><kbd>Y</kbd> Quick Look of the whole page (render it to a cached Markdown/HTML file).
+6. `hist`: "Copy and fill placeholders" for commands with `<...>` or `{{...}}`, reusing the tldr placeholder parser.
+7. Hyper and Tabby as terminals (Raycast SSH users asked for Hyper).
+8. Start the tldr download at install time (a hidden first-run trigger) so the first `tldr` query never waits.
+9. Replace `/usr/bin/shasum` (a Perl script) with CommonCrypto via JXA, for macOS versions that drop Perl.
+
 ## Known limitations
 - Warp has no scripting API. Warp 0.2026.05.20+ runs commands from a temporary Tab Config (deleted after 60 s); older versions get the command pasted into a new tab, which needs Accessibility access for Alfred.
 - Hashed `known_hosts` entries can't be listed; `Match` blocks and `Host *` defaults aren't shown in subtitles (ssh still applies them when connecting).

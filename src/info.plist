@@ -208,6 +208,16 @@
 				<key>vitoclose</key>
 				<false/>
 			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>4555264E-35B0-50E0-A894-88E114C9DD86</string>
+				<key>modifiers</key>
+				<integer>262144</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
 		</array>
 		<key>BC3C4C17-0C9D-59EC-B10B-CDBBED308CC1</key>
 		<array>
@@ -649,7 +659,7 @@
 				<key>escaping</key>
 				<integer>102</integer>
 				<key>script</key>
-				<string>osascript -l JavaScript ./tk.js open-dirs "$1"</string>
+				<string>osascript -l JavaScript ./tk.js open-dirs "$@"</string>
 				<key>scriptargtype</key>
 				<integer>1</integer>
 				<key>scriptfile</key>
@@ -705,6 +715,9 @@ Search the history of zsh, bash, fish and atuin via the `hist` keyword. Commands
 * &lt;kbd&gt;↩&lt;/kbd&gt; Copy the command.
 * &lt;kbd&gt;⌘&lt;/kbd&gt;&lt;kbd&gt;↩&lt;/kbd&gt; Paste the command into the frontmost app.
 * &lt;kbd&gt;⌥&lt;/kbd&gt;&lt;kbd&gt;↩&lt;/kbd&gt; Run the command in your preferred terminal.
+* &lt;kbd&gt;⌃&lt;/kbd&gt;&lt;kbd&gt;↩&lt;/kbd&gt; Run the command in your preferred terminal, in the frontmost Finder folder.
+
+To keep commands with secrets out of the list, add words like `token=` or `password` to “Hide commands with” in the Workflow’s Configuration. If your zsh `HISTFILE` is somewhere unusual, set it there too.
 
 ### tldr Pages
 
@@ -1031,7 +1044,7 @@ Every keyword can be changed in the Workflow’s Configuration.
 				<true/>
 			</dict>
 			<key>description</key>
-			<string>Leave empty to use the newest of ~/.zsh_history, ~/.zhistory (Prezto), ~/.histfile and the XDG folders. Set it if your HISTFILE is elsewhere.</string>
+			<string>Leave empty to use the newest of ~/.zsh_history, ~/.zhistory (Prezto), ~/.histfile and the XDG folders. Set it (~/… or $HOME/…) if your HISTFILE is elsewhere.</string>
 			<key>label</key>
 			<string>zsh history file</string>
 			<key>type</key>
@@ -1076,6 +1089,27 @@ Every keyword can be changed in the Workflow’s Configuration.
 			<string>checkbox</string>
 			<key>variable</key>
 			<string>hist_dedupe</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string>token=, password</string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>description</key>
+			<string>Commands that contain any of these words (comma-separated, any case) are left out, like: token=, password, vault login</string>
+			<key>label</key>
+			<string>Hide commands with</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>hist_ignore</string>
 		</dict>
 		<dict>
 			<key>config</key>

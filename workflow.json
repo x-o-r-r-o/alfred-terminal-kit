@@ -141,7 +141,7 @@
       "type": "textfield",
       "variable": "zsh_histfile",
       "label": "zsh history file",
-      "description": "Leave empty to use the newest of ~/.zsh_history, ~/.zhistory (Prezto), ~/.histfile and the XDG folders. Set it if your HISTFILE is elsewhere.",
+      "description": "Leave empty to use the newest of ~/.zsh_history, ~/.zhistory (Prezto), ~/.histfile and the XDG folders. Set it (~/… or $HOME/…) if your HISTFILE is elsewhere.",
       "config": {
         "default": "",
         "placeholder": "~/.zsh_history",
@@ -169,6 +169,18 @@
         "default": true,
         "required": false,
         "text": "Hide duplicate commands"
+      }
+    },
+    {
+      "type": "textfield",
+      "variable": "hist_ignore",
+      "label": "Hide commands with",
+      "description": "Commands that contain any of these words (comma-separated, any case) are left out, like: token=, password, vault login",
+      "config": {
+        "default": "",
+        "placeholder": "token=, password",
+        "required": false,
+        "trim": true
       }
     },
     {
@@ -392,7 +404,7 @@
     {
       "id": "open_dirs",
       "type": "script",
-      "script": "osascript -l JavaScript ./tk.js open-dirs \"$1\""
+      "script": "osascript -l JavaScript ./tk.js open-dirs \"$@\""
     },
     {
       "id": "notify",
@@ -432,6 +444,11 @@
       "from": "sf_hist",
       "to": "route",
       "mod": "alt"
+    },
+    {
+      "from": "sf_hist",
+      "to": "route",
+      "mod": "ctrl"
     },
     {
       "from": "sf_tldr",

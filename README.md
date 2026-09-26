@@ -26,6 +26,9 @@ Search the history of zsh, bash, fish and atuin via the `hist` keyword. Commands
 * <kbd>↩</kbd> Copy the command.
 * <kbd>⌘</kbd><kbd>↩</kbd> Paste the command into the frontmost app.
 * <kbd>⌥</kbd><kbd>↩</kbd> Run the command in your preferred terminal.
+* <kbd>⌃</kbd><kbd>↩</kbd> Run the command in your preferred terminal, in the frontmost Finder folder.
+
+To keep commands with secrets out of the list, add words like `token=` or `password` to “Hide commands with” in the Workflow’s Configuration. If your zsh `HISTFILE` is somewhere unusual, set it there too.
 
 ### tldr Pages
 
