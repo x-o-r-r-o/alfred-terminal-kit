@@ -954,7 +954,8 @@ class TldrTests(unittest.TestCase):
         src = open(os.path.join(SRC, "tldr-update.sh")).read()
         t = int(re.search(r"--max-time (\d+)", src).group(1))
         retries = int(re.search(r"--retry (\d+)", src).group(1))
-        self.assertLess(2 * t * (retries + 1), 600)
+        sums = int(re.search(r'sums=\$\(/usr/bin/curl -fsSL --max-time (\d+)', src).group(1))
+        self.assertLess(2 * t * (retries + 1) + sums, 600)
 
     def test_failed_swap_keeps_old_pages(self):
         # Audit 2: if moving the new pages into place fails, the old pages are put back
@@ -966,6 +967,51 @@ class TldrTests(unittest.TestCase):
         run("act", "", cache=cache, tk_action="tldr-update", TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1",
             PATH=fakebin + ":" + os.environ["PATH"])
         self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url)[0]["title"], "tar")
+
+    def test_archive_is_data_only(self):
+        # Audit 4: only *.md pages survive extraction: no symbolic links, other files or executable bits
+        import stat as st
+        d = tempfile.mkdtemp(dir=TMP)
+        path = os.path.join(d, "tldr-pages.en.zip")
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("common/tar.md", TAR)
+            i = zipfile.ZipInfo("common/run.md"); i.external_attr = (st.S_IFREG | 0o755) << 16; z.writestr(i, "# run\n")
+            i = zipfile.ZipInfo("osx/evil.sh"); i.external_attr = (st.S_IFREG | 0o755) << 16; z.writestr(i, "#!/bin/sh\n")
+            i = zipfile.ZipInfo("common/home.md"); i.create_system = 3; i.external_attr = (st.S_IFLNK | 0o777) << 16
+            z.writestr(i, "/etc/hosts")
+        cache = new_cache()
+        items("tldr", "", cache=cache, TK_TLDR_URL="file://" + d + "/tldr-pages.{lang}.zip", TK_SYNC_UPDATE="1")
+        root = os.path.join(cache, "tldr", "en")
+        found = sorted(os.path.relpath(os.path.join(b, f), root) for b, _, fs in os.walk(root) for f in fs)
+        self.assertEqual(found, ["common/run.md", "common/tar.md"])
+        for f in found:
+            self.assertEqual(st.S_IMODE(os.lstat(os.path.join(root, f)).st_mode), 0o644)
+
+    def test_checksum_is_verified(self):
+        # Audit 4: the release's tldr.sha256sums must match the archive when it lists it
+        import hashlib
+        d = tempfile.mkdtemp(dir=TMP)
+        path = make_zip(os.path.join(d, "tldr-pages.en.zip"), EN)
+        digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        url = "file://" + d + "/tldr-pages.{lang}.zip"
+        write(os.path.join(d, "tldr.sha256sums"), f"{'0' * 64}  index.json\n{'f' * 64}  tldr-pages.en.zip\n")
+        cache = new_cache()
+        its = items("tldr", "tar", cache=cache, TK_TLDR_URL=url, TK_SYNC_UPDATE="1")
+        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
+        self.assertIn("checksum", its[0]["subtitle"])
+        write(os.path.join(d, "tldr.sha256sums"), f"{digest}  tldr-pages.en.zip\n")
+        run("act", "", cache=cache, tk_action="tldr-update", TK_TLDR_URL=url, TK_SYNC_UPDATE="1")
+        self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=url)[0]["title"], "tar")
+
+    def test_corrupt_archive_is_rejected(self):
+        d = tempfile.mkdtemp(dir=TMP)
+        path = make_zip(os.path.join(d, "tldr-pages.en.zip"), EN)
+        data = bytearray(open(path, "rb").read())
+        i = data.index(b"Archiving")
+        data[i:i + 3] = b"XXX"  # breaks the CRC of common/tar.md
+        write(path, bytes(data))
+        its = items("tldr", "tar", cache=new_cache(), TK_TLDR_URL="file://" + d + "/tldr-pages.{lang}.zip", TK_SYNC_UPDATE="1")
+        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
 
     def test_weekly_refresh(self):
         cache = new_cache()
