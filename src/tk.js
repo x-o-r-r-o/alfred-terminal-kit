@@ -361,6 +361,16 @@ function plan(term, cmd, dir) {
       const scheme = warpPreview() ? "warppreview" : "warp";
       const url = `${scheme}://action/new_${tab ? "tab" : "window"}?path=${urlEncodePath(dir)}`;
       if (!cmd) return [{ type: "url", url }];
+      // Warp 2026.05.20 added warp://tab_config/<file>: a temporary Tab Config runs the command,
+      // with no clipboard or keystrokes. Older versions get the command pasted.
+      if (versionAtLeast(appVersion(app), WARP_TAB_CONFIG_VERSION)) {
+        const stem = `${WARP_RUN_PREFIX}${$.NSUUID.UUID.UUIDString.js.toLowerCase()}`;
+        const running = warpRunning();
+        return [{
+          type: "warp-tab-config", file: `${warpBase()}/tab_configs/${stem}.toml`, toml: warpRunConfig(cmd, dir),
+          url: `${scheme}://tab_config/${stem}${!tab && running ? "?new_window=true" : ""}`,
+        }];
+      }
       return [{ type: "warp-paste", url, cmd, bundleid: warpId() }];
     }
     case "kitty":
@@ -375,8 +385,14 @@ function plan(term, cmd, dir) {
   }
 }
 
+// TK_PASTEBOARD names a private pasteboard for the tests, so they never touch the real clipboard.
+function pasteboard() {
+  const name = env("TK_PASTEBOARD", "");
+  return name ? $.NSPasteboard.pasteboardWithName(name) : $.NSPasteboard.generalPasteboard;
+}
+
 function setClipboard(text, transient) {
-  const pb = $.NSPasteboard.generalPasteboard;
+  const pb = pasteboard();
   pb.clearContents;
   pb.setStringForType($(text), $.NSPasteboardTypeString);
   if (transient) {
@@ -386,9 +402,35 @@ function setClipboard(text, transient) {
   }
 }
 
-function getClipboard() {
-  const s = $.NSPasteboard.generalPasteboard.stringForType($.NSPasteboardTypeString);
-  return s.isNil() ? null : s.js;
+// Every item and type on the clipboard (text, rich text, images, files), to put back later.
+function clipboardSnapshot() {
+  const items = pasteboard().pasteboardItems;
+  const out = [];
+  for (let i = 0; i < (items.isNil() ? 0 : items.count); i++) {
+    const item = items.objectAtIndex(i);
+    const types = item.types;
+    const pairs = [];
+    for (let j = 0; j < types.count; j++) {
+      const t = types.objectAtIndex(j);
+      const d = item.dataForType(t);
+      if (!d.isNil()) pairs.push([t, d]);
+    }
+    out.push(pairs);
+  }
+  return out;
+}
+
+function restoreClipboard(snapshot) {
+  const pb = pasteboard();
+  pb.clearContents;
+  if (!snapshot.length) return;
+  const objs = $.NSMutableArray.array;
+  for (const pairs of snapshot) {
+    const item = $.NSPasteboardItem.alloc.init;
+    for (const [t, d] of pairs) item.setDataForType(d, t);
+    objs.addObject(item);
+  }
+  pb.writeObjects(objs);
 }
 
 function openURL(url) {
@@ -411,6 +453,7 @@ function launch(cmd, dir) {
     else if (s.type === "applescript") r = exec("/usr/bin/osascript", [`${CWD}/applescript/${s.script}.applescript`, ...s.argv]);
     else if (s.type === "url") r = { ok: openURL(s.url), err: "Couldn't open Warp" };
     else if (s.type === "warp-paste") r = warpPaste(s);
+    else if (s.type === "warp-tab-config") r = warpTabConfig(s);
     if (!r.ok) {
       if (cmd) setClipboard(cmd, false);
       return `Couldn't open ${terminalName(term)}${r.err ? `: ${oneLine(r.err, 120)}` : ""}${cmd ? ". The command is on the clipboard." : ""}`;
@@ -420,21 +463,78 @@ function launch(cmd, dir) {
   return undefined;
 }
 
-// Warp has no scripting API: open a tab or window, then paste the command with ⌘V and press Return,
-// but only once Warp is really frontmost. The clipboard is restored afterwards.
+const WARP_TAB_CONFIG_VERSION = "0.2026.5.20";
+const WARP_RUN_PREFIX = "terminal-kit-run-";
+
+function warpBase() {
+  return HOME + (warpPreview() ? "/.warp-preview" : "/.warp");
+}
+
+function warpRunning() {
+  return $.NSRunningApplication.runningApplicationsWithBundleIdentifier(warpId()).count > 0;
+}
+
+// A TOML basic string: quotes, backslashes and control characters escaped; lone surrogates replaced.
+function tomlString(s) {
+  let out = "";
+  for (const ch of String(s)) {
+    const c = ch.codePointAt(0);
+    if (ch === '"' || ch === "\\") out += "\\" + ch;
+    else if (c === 9) out += "\\t";
+    else if (c === 10) out += "\\n";
+    else if (c < 0x20 || c === 0x7f) out += "\\u" + c.toString(16).padStart(4, "0");
+    else if (c >= 0xd800 && c <= 0xdfff) out += "\ufffd";
+    else out += ch;
+  }
+  return `"${out}"`;
+}
+
+// A one-pane Tab Config that runs `cmd` in `dir`. Warp only fills in {{params}} the config defines,
+// and this one defines none, so the command reaches the shell exactly as written.
+function warpRunConfig(cmd, dir) {
+  return `name = "Terminal Kit"\n\n[[panes]]\nid = "main"\ntype = "terminal"\ndirectory = ${tomlString(dir)}\ncommands = [${tomlString(cmd)}]\n`;
+}
+
+// Write the temporary Tab Config, open it, and delete it a minute later (Warp reads it when the link
+// opens; a cold start can take a few seconds). Leftovers from earlier runs are removed first.
+function warpTabConfig(s) {
+  const dir = s.file.replace(/\/[^/]*$/, "");
+  mkdirs(dir);
+  for (const f of listDir(dir)) {
+    if (!f.startsWith(WARP_RUN_PREFIX)) continue;
+    const st = stat(`${dir}/${f}`);
+    if (st && now() - st.mtime > 120) FM.removeItemAtPathError(`${dir}/${f}`, $());
+  }
+  if (!writeFile(s.file, s.toml)) return { ok: false, err: `Couldn't write ${tildify(s.file)}` };
+  FM.setAttributesOfItemAtPathError($({ NSFilePosixPermissions: 0o600 }), s.file, $());
+  if (!openURL(s.url)) {
+    FM.removeItemAtPathError(s.file, $());
+    return { ok: false, err: "Couldn't open Warp" };
+  }
+  exec(env("TK_NOHUP", "/usr/bin/nohup"), ["/bin/sh", "-c", 'sleep 60; rm -f -- "$1"', "sh", s.file], { wait: false });
+  return { ok: true };
+}
+
+// Older Warp has no way to run a command: open a tab or window, then paste the command with ⌘V and
+// press Return, but only once Warp is really frontmost. The clipboard is put back afterwards, all of
+// it (images and files too); if the paste can't happen the command stays on the clipboard instead.
 function warpPaste(s) {
   const running = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(s.bundleid).count > 0;
-  const previous = getClipboard();
-  setClipboard(s.cmd, true);
-  if (!openURL(s.url)) return { ok: false, err: "Couldn't open Warp" };
-  const r = exec("/usr/bin/osascript", [`${CWD}/applescript/warp-paste.applescript`, s.bundleid, running ? "warm" : "cold"]);
-  if (r.ok && r.out.trim() === "ok") {
-    delay(0.4);
-    if (previous !== null) setClipboard(previous, false);
-    return { ok: true };
+  const previous = clipboardSnapshot();
+  let pasted = false;
+  try {
+    setClipboard(s.cmd, true);
+    if (!openURL(s.url)) return { ok: false, err: "Couldn't open Warp" };
+    const r = exec("/usr/bin/osascript", [`${CWD}/applescript/warp-paste.applescript`, s.bundleid, running ? "warm" : "cold"]);
+    pasted = r.ok && r.out.trim() === "ok";
+  } finally {
+    if (pasted) {
+      delay(0.4); // Warp reads the clipboard after the keystroke arrives
+      restoreClipboard(previous);
+    } else setClipboard(s.cmd, false);
   }
-  setClipboard(s.cmd, false);
-  return { ok: true, message: "Warp didn't come to the front in time. The command is on the clipboard: press ⌘V in Warp." };
+  return pasted ? { ok: true }
+    : { ok: true, message: "Warp didn't come to the front in time. The command is on the clipboard: press ⌘V in Warp." };
 }
 
 // ---------- Finder ----------
@@ -495,12 +595,12 @@ function tomlName(text) {
 }
 
 function warpConfigs() {
-  const base = HOME + (warpPreview() ? "/.warp-preview" : "/.warp");
+  const base = warpBase();
   const scheme = warpPreview() ? "warppreview" : "warp";
   const out = [];
   const tabDir = `${base}/tab_configs`;
   for (const f of listDir(tabDir).sort()) {
-    if (!/\.toml$/i.test(f) || f.startsWith(".")) continue;
+    if (!/\.toml$/i.test(f) || f.startsWith(".") || f.startsWith(WARP_RUN_PREFIX)) continue;
     const path = `${tabDir}/${f}`;
     if (isDir(path)) continue;
     const stem = f.replace(/\.toml$/i, "");

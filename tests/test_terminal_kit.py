@@ -55,6 +55,20 @@ def act(action, arg, **kw):
     return (logs[0] if logs else None), out.stdout.strip()
 
 
+def jxa(code, **env):
+    """Evaluate `code` with tk.js's functions in scope (for internals no command exposes)."""
+    e = {k: v for k, v in os.environ.items() if not k.startswith(("TK_", "alfred_", "tk_"))}
+    e.update(TK_HOME=new_home(), alfred_workflow_cache=new_cache(), TK_DRY_RUN="1", TK_APPS=NO_APPS)
+    e.update(env)
+    drv = ('ObjC.import("Foundation");\nfunction run(argv) {\n'
+           '  const src = $.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, null).js.replace(/^#!.*\\n/, "");\n'
+           '  return eval(src + "\\n;" + argv[1]);\n}\n')
+    out = subprocess.run(["osascript", "-l", "JavaScript", "-e", drv, os.path.join(SRC, "tk.js"), code], cwd=SRC, env=e,
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
 def validate(data):
     assert isinstance(data.get("items"), list)
     for it in data["items"]:
@@ -472,6 +486,18 @@ class LauncherTests(unittest.TestCase):
             self.assertNotIn("do shell script", src, f)
             self.assertNotIn("run script", src, f)
 
+    def test_applescripts_compile(self):
+        # Audit 4: catch syntax errors. iTerm2 and Ghostty scripts need the app's dictionary to compile.
+        ids = {"iterm": "com.googlecode.iterm2", "ghostty": "com.mitchellh.ghostty"}
+        for f in os.listdir(os.path.join(SRC, "applescript")):
+            name = f.replace(".applescript", "")
+            if name in ids and not subprocess.run(["/usr/bin/mdfind", f"kMDItemCFBundleIdentifier == '{ids[name]}'"],
+                                                  capture_output=True, text=True).stdout.strip():
+                continue
+            out = subprocess.run(["/usr/bin/osacompile", "-o", os.path.join(TMP, name + ".scpt"), os.path.join(SRC, "applescript", f)],
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.returncode, 0, f"{f}: {out.stderr}")
+
     def test_no_second_window_on_launch(self):
         # Audit 2: iTerm2 and Ghostty open a window when they launch; reuse it, and never wait
         # for a window that a running app with no windows won't open by itself.
@@ -525,14 +551,83 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("-e", argv)
         self.assertTrue(any(a.startswith("--working-directory=") for a in argv))
 
+    def test_warp_runs_commands_with_a_tab_config(self):
+        # Audit 4: Warp 2026.05.20+ runs the command from a temporary Tab Config: no clipboard, no keystrokes
+        import tomllib
+        home = new_home()
+        cmd = self.NASTY + "\x01\x7f\t{{name}} \\{{x}} \"q\" 😀"
+        steps, _ = act("run", cmd, TK_APPS=self.apps("warp"), terminal="warp", TK_APP_VERSION="0.2026.05.20.09.21.00", home=home)
+        s = steps["steps"][0]
+        self.assertEqual(s["type"], "warp-tab-config")
+        stem = os.path.basename(s["file"])[:-5]
+        self.assertTrue(stem.startswith("terminal-kit-run-"), stem)
+        self.assertEqual(os.path.dirname(s["file"]), os.path.join(home, ".warp", "tab_configs"))
+        self.assertEqual(s["url"], f"warp://tab_config/{stem}")  # Warp isn't running: a tab in its first window
+        cfg = tomllib.loads(s["toml"])
+        self.assertEqual(cfg, {"name": "Terminal Kit", "panes": [{"id": "main", "type": "terminal", "directory": home, "commands": [cmd]}]})
+        self.assertFalse(os.path.exists(s["file"]))  # dry run: nothing written
+        steps, _ = act("run", "ls", TK_APPS=self.apps("warp"), terminal="warp", warp_release="preview", TK_APP_VERSION="0.2026.06.03.09.49.00", home=home)
+        self.assertTrue(steps["steps"][0]["url"].startswith("warppreview://tab_config/terminal-kit-run-"))
+        self.assertIn("/.warp-preview/tab_configs/", steps["steps"][0]["file"])
+        # Older Warp: paste
+        steps, _ = act("run", "ls", TK_APPS=self.apps("warp"), terminal="warp", TK_APP_VERSION="0.2026.05.13.09.14.00")
+        self.assertEqual(steps["steps"][0]["type"], "warp-paste")
+        # Temporary configs never show up in the warp list
+        write(os.path.join(home, ".warp", "tab_configs", "terminal-kit-run-abc.toml"), 'name = "Terminal Kit"\n')
+        self.assertNotIn("Terminal Kit", titles(items("warp", home=home, TK_APPS=self.apps("warp"))))
+
+    def test_warp_tab_config_file_is_private_and_removed(self):
+        # Audit 4: the temporary Tab Config is 0600, old leftovers are cleaned up, and a remover is started
+        home = new_home()
+        tc = os.path.join(home, ".warp", "tab_configs")
+        old = write(os.path.join(tc, "terminal-kit-run-old.toml"), "x")
+        os.utime(old, (time.time() - 600, time.time() - 600))
+        mine = write(os.path.join(tc, "mine.toml"), 'name = "Mine"\n')
+        os.utime(mine, (time.time() - 600, time.time() - 600))
+        log = os.path.join(TMP, "nohup-args.txt")
+        fake = write(os.path.join(TMP, "fake-nohup"), f'#!/bin/sh\nprintf "%s\\n" "$@" > {log!r}\n')
+        os.chmod(fake, 0o755)
+        r = jxa('JSON.stringify(warpTabConfig(plan("warp", "echo hi", HOME)[0]))', TK_HOME=home, TK_NOHUP=fake,
+                TK_APPS=json.dumps({"warp": "/Applications/Warp.app"}), TK_APP_VERSION="0.2026.05.20.09.21.00", TK_DRY_RUN="1")
+        self.assertEqual(r, {"ok": True})
+        files = [f for f in os.listdir(tc) if f.startswith("terminal-kit-run-")]
+        self.assertEqual(len(files), 1)
+        self.assertNotEqual(files[0], "terminal-kit-run-old.toml")
+        self.assertTrue(os.path.exists(mine))  # the user's own configs are never touched
+        path = os.path.join(tc, files[0])
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        for _ in range(50):
+            if os.path.exists(log):
+                break
+            time.sleep(0.1)
+        self.assertEqual(open(log).read().split("\n")[:5], ["/bin/sh", "-c", 'sleep 60; rm -f -- "$1"', "sh", path])
+
+    def test_clipboard_snapshot_keeps_every_type(self):
+        # Audit 4: the Warp paste fallback puts back images and files too, not only plain text
+        r = jxa("""(function(){
+          const pb = pasteboard(); pb.clearContents;
+          const it = $.NSPasteboardItem.alloc.init;
+          it.setStringForType($("before ü"), $.NSPasteboardTypeString);
+          it.setDataForType($("PNG").dataUsingEncoding($.NSUTF8StringEncoding), $("public.png"));
+          const arr = $.NSMutableArray.array; arr.addObject(it); pb.writeObjects(arr);
+          const snap = clipboardSnapshot();
+          setClipboard("secret command", true);
+          const during = [pb.stringForType($.NSPasteboardTypeString).js, !!pb.types.containsObject($("org.nspasteboard.TransientType"))];
+          restoreClipboard(snap);
+          const after = [pb.stringForType($.NSPasteboardTypeString).js, Number(pb.dataForType($("public.png")).length),
+                         !!pb.types.containsObject($("org.nspasteboard.TransientType"))];
+          pb.releaseGlobally;
+          return JSON.stringify({during, after}); })()""", TK_PASTEBOARD=f"terminal-kit-test-{os.getpid()}")
+        self.assertEqual(r, {"during": ["secret command", True], "after": ["before ü", 3, False]})
+
     def test_warp_run_and_open(self):
-        steps, _ = act("run", self.NASTY, TK_APPS=self.apps("warp"), terminal="warp")
+        steps, _ = act("run", self.NASTY, TK_APPS=self.apps("warp"), terminal="warp", TK_APP_VERSION="0.2026.01.07.08.02.00")
         s = steps["steps"][0]
         self.assertEqual(s["type"], "warp-paste")
         self.assertEqual(s["cmd"], self.NASTY)
         self.assertTrue(s["url"].startswith("warp://action/new_window?path=%2F"))
         self.assertEqual(s["bundleid"], "dev.warp.Warp-Stable")
-        steps, _ = act("run", "ls", TK_APPS=self.apps("warp"), terminal="warp", warp_release="preview", terminal_open_in="tab")
+        steps, _ = act("run", "ls", TK_APPS=self.apps("warp"), terminal="warp", warp_release="preview", terminal_open_in="tab", TK_APP_VERSION="0")
         self.assertTrue(steps["steps"][0]["url"].startswith("warppreview://action/new_tab"))
         self.assertEqual(steps["steps"][0]["bundleid"], "dev.warp.Warp-Preview")
 
