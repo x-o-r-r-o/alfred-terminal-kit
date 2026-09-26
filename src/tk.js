@@ -70,6 +70,29 @@ function decodeUTF8(s) {
   }
 }
 
+// Files this workflow wrote itself are always UTF-8: the fast path.
+function readUTF8(path) {
+  const s = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, $());
+  return s.isNil() ? null : s.js;
+}
+
+// The last `max` bytes of a file (from the first full line), as Latin-1. Huge history files
+// are read from the end so the newest commands stay fast to index.
+function readTailLatin1(path, max) {
+  const st = stat(path);
+  if (!st || st.size <= max) return readLatin1(path);
+  const fh = $.NSFileHandle.fileHandleForReadingAtPath(path);
+  if (fh.isNil()) return null;
+  fh.seekToFileOffset(st.size - max);
+  const data = fh.readDataToEndOfFile;
+  fh.closeFile;
+  const s = $.NSString.alloc.initWithDataEncoding(data, $.NSISOLatin1StringEncoding);
+  if (s.isNil()) return null;
+  const t = s.js;
+  const nl = t.indexOf("\n");
+  return nl < 0 ? t : t.slice(nl + 1);
+}
+
 function readText(path) {
   const raw = readLatin1(path);
   return raw === null ? null : decodeUTF8(raw).replace(/^﻿/, "");
@@ -684,8 +707,8 @@ function histIndex() {
   const sig = JSON.stringify([2, dedupe, sources.map((s) => [s.kind, s.path, s.mtime, s.size])]);
   const dir = cacheDir();
   const sigPath = `${dir}/hist-index.sig`, dataPath = `${dir}/hist-index.json`;
-  if (readText(sigPath) === sig) {
-    const data = readText(dataPath);
+  if (readUTF8(sigPath) === sig) {
+    const data = readUTF8(dataPath);
     if (data !== null) {
       try {
         return { entries: JSON.parse(data), sources };
@@ -699,7 +722,7 @@ function histIndex() {
     let list;
     if (s.kind === 3) list = parseAtuin(s.path);
     else {
-      const raw = readLatin1(s.path);
+      const raw = readTailLatin1(s.path, parseInt(env("TK_HIST_MAX_BYTES", ""), 10) || 32 * 1024 * 1024);
       if (raw === null) {
         HIST_WARNINGS.push(`Couldn't read ${tildify(s.path)}`);
         continue;
@@ -737,7 +760,8 @@ function histSearch(entries, query, limit) {
   if (!q) return entries.slice(0, limit);
   const words = q.split(/\s+/);
   const tiers = [[], [], [], []];
-  const flat = q.replace(/\s+/g, "");
+  // Letters in order ("kgp" -> kubectl get pods); a regex is much faster than a loop in JXA.
+  const fuzzy = new RegExp(Array.from(q.replace(/\s+/g, "")).map((c) => c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")).join(".*?"));
   for (const e of entries) {
     const l = e[0].toLowerCase();
     if (l.startsWith(q)) {
@@ -758,9 +782,7 @@ function histSearch(entries, query, limit) {
       continue;
     }
     if (tiers[0].length + tiers[1].length + tiers[2].length + tiers[3].length < limit) {
-      let j = 0;
-      for (let k = 0; k < l.length && j < flat.length; k++) if (l[k] === flat[j]) j++;
-      if (j === flat.length) tiers[3].push(e);
+      if (fuzzy.test(l)) tiers[3].push(e);
     }
   }
   return [].concat(...tiers).slice(0, limit);

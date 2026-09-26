@@ -15,8 +15,12 @@ for lang in "$@"; do
      [[ -d $tmp/pages/common ]]; then
     rm -rf -- "$base/$lang.old"
     [[ -d $base/$lang ]] && mv -- "$base/$lang" "$base/$lang.old"
-    mv -- "$tmp/pages" "$base/$lang" && rm -rf -- "$base/$lang.old" "$base/$lang.error"
-    print -r -- "$EPOCHSECONDS" > "$base/$lang.stamp"
+    if mv -- "$tmp/pages" "$base/$lang"; then
+      rm -rf -- "$base/$lang.old" "$base/$lang.error"
+      print -r -- "$EPOCHSECONDS" > "$base/$lang.stamp"
+    else
+      [[ -d $base/$lang.old ]] && mv -- "$base/$lang.old" "$base/$lang"   # keep the old pages
+    fi
   else
     [[ -s $tmp/err ]] || print -r -- "The archive has no pages" > "$tmp/err"
     /usr/bin/head -c 300 "$tmp/err" > "$base/$lang.error"

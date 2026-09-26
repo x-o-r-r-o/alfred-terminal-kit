@@ -286,6 +286,14 @@ class HistoryTests(unittest.TestCase):
         its = items("hist", home=home)
         self.assertTrue(any("atuin" in t for t in titles(its)), titles(its))
 
+    def test_fuzzy_with_regex_characters(self):
+        # Audit 2: the fuzzy matcher is a regex now: special characters must be escaped
+        home = self.home_with(zsh=b"echo a.*b\nls [x]\ncat (y)\n")
+        self.assertEqual(items("hist", "a.*b", home=home)[0]["arg"], "echo a.*b")
+        self.assertEqual(items("hist", "l[x]", home=home)[0]["arg"], "ls [x]")
+        self.assertEqual(items("hist", "c(y)", home=home)[0]["arg"], "cat (y)")
+        self.assertEqual(items("hist", "e\\", home=home)[0]["title"], "No command matches “e\\”")
+
     def test_search(self):
         zsh = b"".join(f": {1700000000 + i}:0;{c}\n".encode() for i, c in enumerate(
             ["git commit -m wip", "docker compose up", "echo git", "kubectl get pods", "ls ~/git-repos", "gcm"]))
@@ -350,6 +358,18 @@ class HistoryTests(unittest.TestCase):
         steps, _ = act("run", "tkfile:/etc/hosts", cache=cache, TK_APPS=json.dumps({"iterm": "/Applications/iTerm.app"}))
         self.assertEqual(steps["steps"][0]["argv"][0], "tkfile:/etc/hosts")
 
+    def test_huge_file_reads_the_newest_part(self):
+        # Audit 2: files over the size limit are indexed from their end, starting at a full line
+        home = new_home()
+        lines = b"".join(f": {1600000000 + i}:0;command number {i}\n".encode() for i in range(2000))
+        write(os.path.join(home, ".zsh_history"), lines)
+        its = items("hist", "zzzz", home=home, TK_HIST_MAX_BYTES="10000")
+        n = int(its[0]["subtitle"].split()[1])
+        self.assertTrue(200 < n < 400, n)
+        its = items("hist", "", home=home, TK_HIST_MAX_BYTES="10000")
+        self.assertEqual(its[0]["arg"], "command number 1999")
+        self.assertTrue(all(i["arg"].startswith("command number ") for i in its))
+
     def test_cache_invalidated_by_mtime(self):
         home = self.home_with(zsh=b": 1700000000:0;first\n")
         cache = new_cache()
@@ -405,6 +425,16 @@ class LauncherTests(unittest.TestCase):
             self.assertIn("on run argv", src, f)
             self.assertNotIn("do shell script", src, f)
             self.assertNotIn("run script", src, f)
+
+    def test_no_second_window_on_launch(self):
+        # Audit 2: iTerm2 and Ghostty open a window when they launch; reuse it, and never wait
+        # for a window that a running app with no windows won't open by itself.
+        for f in ["iterm", "ghostty", "terminal"]:
+            src = open(os.path.join(SRC, "applescript", f + ".applescript"), encoding="utf-8").read()
+            self.assertIn("wasRunning", src, f)
+            self.assertIn("if not wasRunning then", src.replace("if wasRunning then", "if not wasRunning then"), f)
+        src = open(os.path.join(SRC, "applescript", "iterm.applescript"), encoding="utf-8").read()
+        self.assertLess(src.index("if not wasRunning then"), src.index("repeat 50 times"))
 
     def test_osascript_treats_dash_arguments_as_data(self):
         probe = write(os.path.join(TMP, "probe.applescript"), "on run argv\nreturn (item 1 of argv) & \"|\" & (item 2 of argv)\nend run\n")
@@ -777,6 +807,17 @@ class TldrTests(unittest.TestCase):
         t = int(re.search(r"--max-time (\d+)", src).group(1))
         retries = int(re.search(r"--retry (\d+)", src).group(1))
         self.assertLess(2 * t * (retries + 1), 600)
+
+    def test_failed_swap_keeps_old_pages(self):
+        # Audit 2: if moving the new pages into place fails, the old pages are put back
+        cache = new_cache()
+        items("tldr", "", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1")
+        fakebin = tempfile.mkdtemp(dir=TMP)
+        write(os.path.join(fakebin, "mv"), '#!/bin/zsh\n[[ $2 == */pages ]] && exit 1\nexec /bin/mv "$@"\n')
+        os.chmod(os.path.join(fakebin, "mv"), 0o755)
+        run("act", "", cache=cache, tk_action="tldr-update", TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1",
+            PATH=fakebin + ":" + os.environ["PATH"])
+        self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url)[0]["title"], "tar")
 
     def test_weekly_refresh(self):
         cache = new_cache()
