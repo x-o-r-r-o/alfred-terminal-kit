@@ -1591,7 +1591,7 @@ function sshItems(query) {
       icon: { path: `icons/${h.source === "known" ? "known" : "ssh"}.png` },
       text: { copy: cmd, largetype: cmd },
       mods: {
-        cmd: { arg: cmd, subtitle: `Copy “${cmd}”`, variables: { tk_action: "copy" } },
+        cmd: { arg: cmd, subtitle: "Paste the ssh command into the frontmost app", variables: { tk_action: "paste" } },
         alt: { arg: h.file, subtitle: `Open ${tildify(h.file)}`, variables: { tk_action: "edit" } },
       },
     }, h.source === "known" ? 1 : 0]);
@@ -1605,8 +1605,9 @@ function sshItems(query) {
     const cmd = `ssh ${typed[3] ? `-p ${typed[3]} ` : ""}${shq((typed[1] ? typed[1] + "@" : "") + host)}`;
     items.push({
       title: `Connect to ${q}`, subtitle: `${cmd}  ·  in ${term}`, arg: cmd, variables: { tk_action: "ssh" }, icon: { path: "icons/terminal.png" },
+      text: { copy: cmd, largetype: cmd },
       mods: {
-        cmd: { arg: cmd, subtitle: `Copy “${cmd}”`, variables: { tk_action: "copy" } },
+        cmd: { arg: cmd, subtitle: "Paste the ssh command into the frontmost app", variables: { tk_action: "paste" } },
         alt: { arg: cmd, valid: false, subtitle: "Not a host from ~/.ssh" },
       },
     });

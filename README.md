@@ -49,14 +49,19 @@ Connect to hosts from `~/.ssh/config` (including `Include` files) and `~/.ssh/kn
 ![SSH hosts](images/ssh.png)
 
 * <kbd>↩</kbd> Connect in your preferred terminal.
-* <kbd>⌘</kbd><kbd>↩</kbd> Copy the `ssh` command.
+* <kbd>⌘</kbd><kbd>↩</kbd> Paste the `ssh` command into the frontmost app.
 * <kbd>⌥</kbd><kbd>↩</kbd> Open the file that defines the host.
+* <kbd>⌘</kbd><kbd>C</kbd> Copy the `ssh` command.
 
 ### Terminals
 
 Choose Terminal, iTerm2, Ghostty, Warp, kitty, WezTerm or Alacritty in the Workflow’s Configuration, or leave it on Automatic to use the first one installed. Commands are typed into a new window (or a tab, for iTerm2, Ghostty and Warp). Warp runs the command from a temporary Tab Config, which is deleted a minute later. Warp versions older than May 2026 can’t do that, so Terminal Kit pastes the command into a new Warp tab instead: Alfred needs Accessibility access for that. Ghostty 1.3 or newer is controlled through AppleScript; older versions start a new window that runs the command.
 
 Every keyword can be changed in the Workflow’s Configuration.
+
+### Changes in 1.1
+
+* SSH: <kbd>⌘</kbd><kbd>↩</kbd> now pastes the `ssh` command, like `hist` and `tldr`. Copy it with <kbd>⌘</kbd><kbd>C</kbd>.
 
 ## Development
 

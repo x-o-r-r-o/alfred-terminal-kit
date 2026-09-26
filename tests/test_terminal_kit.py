@@ -780,7 +780,10 @@ Host -oProxyCommand=evil
         self.assertEqual(web["arg"], "ssh web")
         self.assertEqual(web["variables"]["tk_action"], "ssh")
         self.assertEqual(web["mods"]["cmd"]["arg"], "ssh web")
-        self.assertEqual(web["mods"]["cmd"]["variables"]["tk_action"], "copy")
+        # 1.1: ⌘↩ pastes the command (as in hist and tldr); ⌘C still copies it
+        self.assertEqual(web["mods"]["cmd"]["variables"]["tk_action"], "paste")
+        self.assertIn("Paste", web["mods"]["cmd"]["subtitle"])
+        self.assertEqual(web["text"]["copy"], "ssh web")
         self.assertEqual(web["mods"]["alt"]["arg"], os.path.join(self.home, ".ssh/config"))
         db = find(its, "db")
         self.assertIn("db user@10.0.0.5", db["subtitle"])
@@ -797,6 +800,9 @@ Host -oProxyCommand=evil
         its = items("ssh", "root@new.example.com:2201", home=self.home)
         row = find(its, "Connect to")
         self.assertEqual(row["arg"], "ssh -p 2201 root@new.example.com")
+        self.assertEqual(row["mods"]["cmd"]["arg"], row["arg"])
+        self.assertEqual(row["mods"]["cmd"]["variables"]["tk_action"], "paste")
+        self.assertEqual(row["text"]["copy"], row["arg"])
         for q in ["-oProxyCommand=x", "a;b", "$(id)", "a b"]:
             self.assertFalse(any(t.startswith("Connect to") for t in titles(items("ssh", q, home=self.home))), q)
 
