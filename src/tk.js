@@ -325,6 +325,8 @@ function versionAtLeast(v, want) {
 // A command for runner.sh is written to a private file; only its path travels as argv.
 function commandFile(cmd) {
   const dir = mkdirs(`${cacheDir()}/run`);
+  // Private folder: the file is briefly world-readable between the atomic write and the chmod below.
+  FM.setAttributesOfItemAtPathError($({ NSFilePosixPermissions: 0o700 }), dir, $());
   // Remove leftovers older than a day (runner.sh deletes the file it runs).
   for (const f of listDir(dir)) {
     const s = stat(`${dir}/${f}`);
@@ -820,14 +822,18 @@ function parseAtuin(path) {
 function histIndex() {
   const sources = histSources();
   const dedupe = env("hist_dedupe", "1") !== "0";
-  const sig = JSON.stringify([2, dedupe, sources.map((s) => [s.kind, s.path, s.mtime, s.size])]);
+  const sig = JSON.stringify([3, dedupe, sources.map((s) => [s.kind, s.path, s.mtime, s.size])]);
   const dir = cacheDir();
   const sigPath = `${dir}/hist-index.sig`, dataPath = `${dir}/hist-index.json`;
   if (readUTF8(sigPath) === sig) {
     const data = readUTF8(dataPath);
     if (data !== null) {
       try {
-        return { entries: JSON.parse(data), sources };
+        const j = JSON.parse(data);
+        if (Array.isArray(j.entries) && Array.isArray(j.warnings)) {
+          HIST_WARNINGS.push(...j.warnings);
+          return { entries: j.entries, sources };
+        }
       } catch (e) {
         // rebuild below
       }
@@ -864,10 +870,9 @@ function histIndex() {
     }
     entries.push([e[0], e[1], e[2]]);
   }
-  if (!HIST_WARNINGS.length) {
-    writeFile(dataPath, JSON.stringify(entries));
-    writeFile(sigPath, sig);
-  }
+  // Warnings are cached too: a broken atuin database must not make every keystroke re-read everything.
+  writeFile(dataPath, JSON.stringify({ warnings: HIST_WARNINGS, entries }));
+  writeFile(sigPath, sig);
   return { entries, sources };
 }
 

@@ -331,8 +331,12 @@ class HistoryTests(unittest.TestCase):
         con.close()
         self.assertEqual(items("hist", home=home)[0]["arg"], "old schema")
         write(db, b"not a database" * 100)
-        its = items("hist", home=home)
+        cache = new_cache()
+        its = items("hist", home=home, cache=cache)
         self.assertTrue(any("atuin" in t for t in titles(its)), titles(its))
+        # Audit 4: the failure is cached with the index, so the next keystroke doesn't run sqlite3 again
+        its = items("hist", home=home, cache=cache, TK_SQLITE="/nonexistent/sqlite3")
+        self.assertTrue(any("atuin history couldn't be read" in t and "Couldn't run" not in t for t in titles(its)), titles(its))
 
     def test_fuzzy_with_regex_characters(self):
         # Audit 2: the fuzzy matcher is a regex now: special characters must be escaped
@@ -527,6 +531,7 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(f.startswith(os.path.join(cache, "run", "cmd-")), f)
         self.assertEqual(open(f, encoding="utf-8").read(), self.NASTY)
         self.assertEqual(stat.S_IMODE(os.stat(f).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(f)).st_mode), 0o700)
         self.assertNotIn(self.NASTY, argv)
         self.assertEqual(argv[argv.index("/bin/zsh"):-1], ["/bin/zsh", "-f", os.path.join(SRC, "runner.sh"), argv[-2]])
         return argv
