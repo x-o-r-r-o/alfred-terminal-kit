@@ -1,0 +1,74 @@
+{
+  "icon": [
+    "apple.terminal.fill",
+    "#1F2937"
+  ],
+  "warp": [
+    "bolt.horizontal.fill",
+    "#7C3AED"
+  ],
+  "tab": [
+    "plus.rectangle.on.rectangle",
+    "#6D28D9"
+  ],
+  "window": [
+    "macwindow.badge.plus",
+    "#4C1D95"
+  ],
+  "terminal": [
+    "apple.terminal.fill",
+    "#334155"
+  ],
+  "hist": [
+    "clock.arrow.circlepath",
+    "#0891B2"
+  ],
+  "zsh": [
+    "z.square.fill",
+    "#0E7490"
+  ],
+  "bash": [
+    "b.square.fill",
+    "#15803D"
+  ],
+  "fish": [
+    "f.square.fill",
+    "#EA580C"
+  ],
+  "atuin": [
+    "a.square.fill",
+    "#9333EA"
+  ],
+  "tldr": [
+    "book.fill",
+    "#059669"
+  ],
+  "example": [
+    "chevron.right.2",
+    "#047857"
+  ],
+  "cheat": [
+    "globe",
+    "#D97706"
+  ],
+  "download": [
+    "arrow.down.circle.fill",
+    "#2563EB"
+  ],
+  "ssh": [
+    "server.rack",
+    "#DB2777"
+  ],
+  "known": [
+    "lock.shield.fill",
+    "#9D174D"
+  ],
+  "info": [
+    "info.circle.fill",
+    "#64748B"
+  ],
+  "error": [
+    "exclamationmark.triangle.fill",
+    "#DC2626"
+  ]
+}

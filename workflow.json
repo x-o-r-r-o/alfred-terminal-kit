@@ -1,0 +1,480 @@
+{
+  "bundleid": "io.github.x-o-r-r-o.terminal-kit",
+  "name": "Terminal Kit",
+  "description": "Warp launch configurations, shell history search, offline tldr pages and SSH hosts",
+  "category": "Productivity",
+  "createdby": "x-o-r-r-o",
+  "webaddress": "https://github.com/x-o-r-r-o/alfred-terminal-kit",
+  "version": "1.0.0",
+  "variablesdontexport": [],
+  "config": [
+    {
+      "type": "textfield",
+      "variable": "keyword_warp",
+      "label": "Keywords",
+      "description": "Warp Tab Configs, Launch Configurations and folders",
+      "config": {
+        "default": "warp",
+        "placeholder": "warp",
+        "required": true,
+        "trim": true
+      }
+    },
+    {
+      "type": "textfield",
+      "variable": "keyword_hist",
+      "label": "",
+      "description": "Shell history",
+      "config": {
+        "default": "hist",
+        "placeholder": "hist",
+        "required": true,
+        "trim": true
+      }
+    },
+    {
+      "type": "textfield",
+      "variable": "keyword_tldr",
+      "label": "",
+      "description": "tldr pages",
+      "config": {
+        "default": "tldr",
+        "placeholder": "tldr",
+        "required": true,
+        "trim": true
+      }
+    },
+    {
+      "type": "textfield",
+      "variable": "keyword_ssh",
+      "label": "",
+      "description": "SSH hosts",
+      "config": {
+        "default": "ssh",
+        "placeholder": "ssh",
+        "required": true,
+        "trim": true
+      }
+    },
+    {
+      "type": "popupbutton",
+      "variable": "terminal",
+      "label": "Terminal",
+      "description": "Runs history commands and SSH connections, and opens folders. Automatic picks the first installed of iTerm2, Ghostty, Warp, kitty, WezTerm, Alacritty and Terminal.",
+      "config": {
+        "default": "auto",
+        "pairs": [
+          [
+            "Automatic",
+            "auto"
+          ],
+          [
+            "Terminal",
+            "terminal"
+          ],
+          [
+            "iTerm2",
+            "iterm"
+          ],
+          [
+            "Ghostty",
+            "ghostty"
+          ],
+          [
+            "Warp",
+            "warp"
+          ],
+          [
+            "kitty",
+            "kitty"
+          ],
+          [
+            "WezTerm",
+            "wezterm"
+          ],
+          [
+            "Alacritty",
+            "alacritty"
+          ]
+        ]
+      }
+    },
+    {
+      "type": "popupbutton",
+      "variable": "terminal_open_in",
+      "label": "Open in",
+      "description": "iTerm2, Ghostty and Warp can use a tab of the front window; the others always open a window.",
+      "config": {
+        "default": "window",
+        "pairs": [
+          [
+            "New window",
+            "window"
+          ],
+          [
+            "New tab",
+            "tab"
+          ]
+        ]
+      }
+    },
+    {
+      "type": "popupbutton",
+      "variable": "warp_release",
+      "label": "Warp release",
+      "description": "",
+      "config": {
+        "default": "stable",
+        "pairs": [
+          [
+            "Warp",
+            "stable"
+          ],
+          [
+            "Warp Preview",
+            "preview"
+          ]
+        ]
+      }
+    },
+    {
+      "type": "textfield",
+      "variable": "zsh_histfile",
+      "label": "zsh history file",
+      "description": "Leave empty for ~/.zsh_history. Set it if your HISTFILE is elsewhere.",
+      "config": {
+        "default": "",
+        "placeholder": "~/.zsh_history",
+        "required": false,
+        "trim": true
+      }
+    },
+    {
+      "type": "checkbox",
+      "variable": "hist_atuin",
+      "label": "History",
+      "description": "",
+      "config": {
+        "default": true,
+        "required": false,
+        "text": "Include atuin history"
+      }
+    },
+    {
+      "type": "checkbox",
+      "variable": "hist_dedupe",
+      "label": "",
+      "description": "",
+      "config": {
+        "default": true,
+        "required": false,
+        "text": "Hide duplicate commands"
+      }
+    },
+    {
+      "type": "popupbutton",
+      "variable": "tldr_language",
+      "label": "tldr language",
+      "description": "Pages missing in this language fall back to English.",
+      "config": {
+        "default": "en",
+        "pairs": [
+          [
+            "English",
+            "en"
+          ],
+          [
+            "Deutsch",
+            "de"
+          ],
+          [
+            "Español",
+            "es"
+          ],
+          [
+            "Français",
+            "fr"
+          ],
+          [
+            "Italiano",
+            "it"
+          ],
+          [
+            "Nederlands",
+            "nl"
+          ],
+          [
+            "Polski",
+            "pl"
+          ],
+          [
+            "Português (Brasil)",
+            "pt_BR"
+          ],
+          [
+            "Português (Portugal)",
+            "pt_PT"
+          ],
+          [
+            "Русский",
+            "ru"
+          ],
+          [
+            "Українська",
+            "uk"
+          ],
+          [
+            "Türkçe",
+            "tr"
+          ],
+          [
+            "简体中文",
+            "zh"
+          ],
+          [
+            "繁體中文",
+            "zh_TW"
+          ],
+          [
+            "日本語",
+            "ja"
+          ],
+          [
+            "한국어",
+            "ko"
+          ],
+          [
+            "हिन्दी",
+            "hi"
+          ],
+          [
+            "Bahasa Indonesia",
+            "id"
+          ],
+          [
+            "فارسی",
+            "fa"
+          ],
+          [
+            "Svenska",
+            "sv"
+          ]
+        ]
+      }
+    },
+    {
+      "type": "popupbutton",
+      "variable": "tldr_options",
+      "label": "tldr options",
+      "description": "How {{[-f|--force]}} style options are copied.",
+      "config": {
+        "default": "long",
+        "pairs": [
+          [
+            "Long form (--force)",
+            "long"
+          ],
+          [
+            "Short form (-f)",
+            "short"
+          ]
+        ]
+      }
+    },
+    {
+      "type": "checkbox",
+      "variable": "tldr_cheatsh",
+      "label": "",
+      "description": "",
+      "config": {
+        "default": true,
+        "required": false,
+        "text": "Offer cheat.sh (online) as a fallback"
+      }
+    },
+    {
+      "type": "checkbox",
+      "variable": "ssh_known_hosts",
+      "label": "SSH",
+      "description": "",
+      "config": {
+        "default": true,
+        "required": false,
+        "text": "Include hosts from ~/.ssh/known_hosts"
+      }
+    }
+  ],
+  "objects": [
+    {
+      "id": "sf_warp",
+      "type": "scriptfilter",
+      "keyword": "{var:keyword_warp}",
+      "title": "Warp",
+      "subtext": "Launch configurations and folders",
+      "script": "osascript -l JavaScript ./tk.js warp \"$1\""
+    },
+    {
+      "id": "sf_hist",
+      "type": "scriptfilter",
+      "keyword": "{var:keyword_hist}",
+      "title": "Shell History",
+      "subtext": "Search zsh, bash, fish and atuin history",
+      "script": "osascript -l JavaScript ./tk.js hist \"$1\""
+    },
+    {
+      "id": "sf_tldr",
+      "type": "scriptfilter",
+      "keyword": "{var:keyword_tldr}",
+      "title": "tldr",
+      "subtext": "Command examples, offline",
+      "script": "osascript -l JavaScript ./tk.js tldr \"$1\"",
+      "running": "Loading tldr pages…"
+    },
+    {
+      "id": "sf_ssh",
+      "type": "scriptfilter",
+      "keyword": "{var:keyword_ssh}",
+      "title": "SSH Hosts",
+      "subtext": "From ~/.ssh/config and known_hosts",
+      "script": "osascript -l JavaScript ./tk.js ssh \"$1\""
+    },
+    {
+      "id": "ua_open",
+      "type": "universalaction",
+      "name": "Open in Terminal",
+      "files": true,
+      "multi": 1
+    },
+    {
+      "id": "route",
+      "type": "conditional",
+      "input": "{var:tk_action}",
+      "branches": [
+        [
+          "copy",
+          "Copy"
+        ],
+        [
+          "paste",
+          "Paste"
+        ]
+      ],
+      "else": "Other actions",
+      "note": "Routes on the tk_action variable set by each result"
+    },
+    {
+      "id": "copy",
+      "type": "clipboard",
+      "autopaste": false
+    },
+    {
+      "id": "paste",
+      "type": "clipboard",
+      "autopaste": true
+    },
+    {
+      "id": "act",
+      "type": "script",
+      "script": "osascript -l JavaScript ./tk.js act \"$1\"",
+      "note": "Runs in a terminal, opens links and files"
+    },
+    {
+      "id": "open_dirs",
+      "type": "script",
+      "script": "osascript -l JavaScript ./tk.js open-dirs \"$1\""
+    },
+    {
+      "id": "notify",
+      "type": "notification"
+    }
+  ],
+  "connections": [
+    {
+      "from": "sf_warp",
+      "to": "route"
+    },
+    {
+      "from": "sf_warp",
+      "to": "route",
+      "mod": "cmd"
+    },
+    {
+      "from": "sf_warp",
+      "to": "route",
+      "mod": "alt"
+    },
+    {
+      "from": "sf_warp",
+      "to": "route",
+      "mod": "ctrl"
+    },
+    {
+      "from": "sf_hist",
+      "to": "route"
+    },
+    {
+      "from": "sf_hist",
+      "to": "route",
+      "mod": "cmd"
+    },
+    {
+      "from": "sf_hist",
+      "to": "route",
+      "mod": "alt"
+    },
+    {
+      "from": "sf_tldr",
+      "to": "route"
+    },
+    {
+      "from": "sf_tldr",
+      "to": "route",
+      "mod": "cmd"
+    },
+    {
+      "from": "sf_tldr",
+      "to": "route",
+      "mod": "alt"
+    },
+    {
+      "from": "sf_ssh",
+      "to": "route"
+    },
+    {
+      "from": "sf_ssh",
+      "to": "route",
+      "mod": "cmd"
+    },
+    {
+      "from": "sf_ssh",
+      "to": "route",
+      "mod": "alt"
+    },
+    {
+      "from": "route",
+      "to": "copy",
+      "branch": "copy"
+    },
+    {
+      "from": "route",
+      "to": "paste",
+      "branch": "paste"
+    },
+    {
+      "from": "route",
+      "to": "act"
+    },
+    {
+      "from": "act",
+      "to": "notify"
+    },
+    {
+      "from": "ua_open",
+      "to": "open_dirs"
+    },
+    {
+      "from": "open_dirs",
+      "to": "notify"
+    }
+  ]
+}
