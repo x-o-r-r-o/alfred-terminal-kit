@@ -1010,7 +1010,7 @@ Every keyword can be changed in the Workflow’s Configuration.
 				</array>
 			</dict>
 			<key>description</key>
-			<string></string>
+			<string>The Warp app whose configurations are listed and that runs commands when Warp is the terminal.</string>
 			<key>label</key>
 			<string>Warp release</string>
 			<key>type</key>

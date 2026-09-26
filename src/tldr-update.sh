@@ -5,7 +5,9 @@
 zmodload zsh/datetime
 base=$1; shift
 lock="$base/.lock"
-trap 'rm -rf -- "$lock"' EXIT
+print -r -- $$ 2>/dev/null > "$lock/pid"  # tk.js checks that this process is alive
+# Remove the lock only while it is still ours.
+trap '[[ ! -f $lock/pid || $(<$lock/pid) == $$ ]] && rm -rf -- "$lock"' EXIT
 url_tpl=${TK_TLDR_URL:-https://github.com/tldr-pages/tldr/releases/latest/download/tldr-pages.{lang}.zip}
 sums_url=${TK_TLDR_SUMS_URL:-${url_tpl%/*}/tldr.sha256sums}
 max_bytes=$(( 200 * 1024 * 1024 ))   # uncompressed; the English pages are about 5 MB

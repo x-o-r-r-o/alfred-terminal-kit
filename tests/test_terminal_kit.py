@@ -10,6 +10,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
 TMP = tempfile.mkdtemp(prefix="terminal-kit-test-")
 NO_APPS = json.dumps({"terminal": "/System/Applications/Utilities/Terminal.app"})
+# Safety net: a test that forgets an override still never reaches GitHub, cheat.sh or the real clipboard.
+SAFE = dict(TK_TLDR_URL="file:///nonexistent/tldr-pages.{lang}.zip", TK_CHEAT_URL="file:///nonexistent",
+            TK_PASTEBOARD=f"terminal-kit-test-{os.getpid()}")
 
 
 def new_home():
@@ -29,7 +32,7 @@ def write(path, data):
 
 def run(cmd, query="", home=None, cache=None, **env):
     e = {k: v for k, v in os.environ.items() if not k.startswith(("TK_", "alfred_", "tk_"))}
-    e.update(TK_HOME=home or new_home(), alfred_workflow_cache=cache or new_cache(), TK_FINDER_DIR="", TK_APPS=NO_APPS)
+    e.update(SAFE, TK_HOME=home or new_home(), alfred_workflow_cache=cache or new_cache(), TK_FINDER_DIR="", TK_APPS=NO_APPS)
     e.update(env)
     out = subprocess.run(["osascript", "-l", "JavaScript", "./tk.js", cmd, query], cwd=SRC, env=e,
                          capture_output=True, text=True, timeout=60)
@@ -58,7 +61,7 @@ def act(action, arg, **kw):
 def jxa(code, **env):
     """Evaluate `code` with tk.js's functions in scope (for internals no command exposes)."""
     e = {k: v for k, v in os.environ.items() if not k.startswith(("TK_", "alfred_", "tk_"))}
-    e.update(TK_HOME=new_home(), alfred_workflow_cache=new_cache(), TK_DRY_RUN="1", TK_APPS=NO_APPS)
+    e.update(SAFE, TK_HOME=new_home(), alfred_workflow_cache=new_cache(), TK_DRY_RUN="1", TK_APPS=NO_APPS)
     e.update(env)
     drv = ('ObjC.import("Foundation");\nfunction run(argv) {\n'
            '  const src = $.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, null).js.replace(/^#!.*\\n/, "");\n'
@@ -1043,7 +1046,7 @@ class TldrTests(unittest.TestCase):
         os.remove(os.path.join(cache, "tldr", ".attempt-en"))
         its = items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1")
         self.assertEqual(its[0]["title"], "tar")  # stale pages still answer
-        self.assertGreater(float(open(stamp).read()), time.time() - 60)
+        self.assertGreater(float(__import__("pathlib").Path(stamp).read_text()), time.time() - 60)
 
 
 class CheatTests(unittest.TestCase):
@@ -1089,6 +1092,12 @@ class CheatTests(unittest.TestCase):
         items("tldr", "tar @cheat", cache=cache, TK_CHEAT_URL=self.url)
         its = items("tldr", "tar @cheat", cache=cache, TK_CHEAT_URL="file:///nonexistent")
         self.assertEqual(its[1]["arg"], "tar -xvf archive.tar")
+        self.assertNotIn("offline", its[0]["subtitle"])  # fresh copy: no network needed
+        for f in os.listdir(os.path.join(cache, "cheat")):
+            os.utime(os.path.join(cache, "cheat", f), (time.time() - 2 * 86400,) * 2)
+        its = items("tldr", "tar @cheat", cache=cache, TK_CHEAT_URL="file:///nonexistent")
+        self.assertEqual(its[1]["arg"], "tar -xvf archive.tar")
+        self.assertIn("offline, saved 2 days ago", its[0]["subtitle"])
 
     def test_disabled(self):
         its = items("tldr", "tar @cheat", TK_CHEAT_URL=self.url, tldr_cheatsh="0")
@@ -1135,6 +1144,116 @@ class PlistTests(unittest.TestCase):
             path = os.path.join(SRC, f)
             self.assertTrue(os.access(path, os.X_OK), f)
             self.assertEqual(subprocess.run(["/bin/zsh", "-n", path]).returncode, 0, f)
+
+
+# ---------------------------------------------------------------- final review
+
+class FinalReviewTests(unittest.TestCase):
+    WARP = json.dumps({"warp": "/Applications/Warp.app", "terminal": "/System/Applications/Utilities/Terminal.app"})
+
+    def raw(self, cmd, query="", **kw):
+        out = run(cmd, query, **kw).stdout
+        self.assertNotRegex(out, r"\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f])")  # no lone high surrogate
+        self.assertNotRegex(out, r"(?<!\\ud[89ab][0-9a-f]{2})\\ud[c-f][0-9a-f]{2}")  # no lone low surrogate
+        data = json.loads(out)
+        validate(data)
+        return data["items"]
+
+    def test_titles_never_split_emoji_or_show_bidi_controls(self):
+        home = new_home()
+        write(os.path.join(home, ".zsh_history"), "x" * 198 + "😀tail\necho \u202eevil\u202c\x1b[0m done\n")
+        its = self.raw("hist", "", home=home)
+        self.assertEqual(its[0]["title"], "echo evil[0m done")
+        self.assertTrue(its[1]["title"].endswith("x…"), its[1]["title"])
+        self.assertIn("\u202e", its[0]["arg"])  # the real command is unchanged
+        lc = os.path.join(home, ".warp", "launch_configurations")
+        write(f"{lc}/a.yaml", 'name: "Line1\\nLine2\\u202e\\ud800"\n')
+        write(os.path.join(home, ".warp", "tab_configs", "b.toml"), 'name = "Tab\\tX\\u0007"\n')
+        t = titles(self.raw("warp", home=home, TK_APPS=self.WARP))
+        self.assertIn("Line1 ⏎ Line2\ufffd", t)
+        self.assertIn("Tab X", t)
+        write(os.path.join(home, ".ssh", "config"), "Host web\n  HostName 10.0.0.1\u202e\n")
+        self.assertEqual(self.raw("ssh", "", home=home)[0]["subtitle"], "10.0.0.1 · ~/.ssh/config")
+
+    def test_tab_config_name_is_top_level(self):
+        home = new_home()
+        write(os.path.join(home, ".warp", "tab_configs", "t.toml"), '[[panes]]\nname = "Pane"\n')
+        self.assertIn("t", titles(items("warp", home=home, TK_APPS=self.WARP)))
+
+    def test_modifiers_never_fall_back_to_a_different_action(self):
+        home = new_home()
+        write(os.path.join(home, ".warp", "launch_configurations", "d.yaml"), "name: Dev\n")
+        dev = find(items("warp", home=home, TK_APPS=self.WARP), "Dev")
+        self.assertIs(dev["mods"]["ctrl"]["valid"], False)
+        typed = find(items("ssh", "me@host", home=home), "Connect to")
+        self.assertIs(typed["mods"]["alt"]["valid"], False)
+
+    def test_big_and_cheat_caches_are_pruned(self):
+        cache = new_cache()
+        big = os.path.join(cache, "big")
+        old = write(os.path.join(big, "big-00000000-1.txt"), "old")
+        os.utime(old, (time.time() - 3 * 86400,) * 2)
+        home = new_home()
+        write(os.path.join(home, ".zsh_history"), "echo " + "y" * 30000 + "\n")
+        items("hist", "", home=home, cache=cache)
+        self.assertFalse(os.path.exists(old))
+        self.assertEqual(len(os.listdir(big)), 1)
+        cheat = os.path.join(cache, "cheat")
+        stale = write(os.path.join(cheat, "stale.txt"), "x")
+        os.utime(stale, (time.time() - 40 * 86400,) * 2)
+        d = tempfile.mkdtemp(dir=TMP)
+        write(os.path.join(d, "ls"), "ls -la\n")
+        items("tldr", "ls @cheat", cache=cache, TK_CHEAT_URL="file://" + d)
+        self.assertFalse(os.path.exists(stale))
+
+    def test_cheat_backoff_after_429_skips_the_network(self):
+        cache = new_cache()
+        write(os.path.join(cache, "cheat", ".backoff"), str(int(time.time() + 200)))
+        d = tempfile.mkdtemp(dir=TMP)
+        write(os.path.join(d, "ls"), "ls -la\n")
+        its = items("tldr", "ls @cheat", cache=cache, TK_CHEAT_URL="file://" + d)
+        self.assertEqual(its[0]["title"], "Couldn't reach cheat.sh")
+        self.assertIn("4 minutes", its[0]["subtitle"])
+        self.assertTrue(its[1].get("valid") is not False and its[1]["arg"] == "https://cheat.sh/ls")
+
+    def test_tldr_lock_owner_liveness(self):
+        base = os.path.join(new_cache(), "tldr")
+        os.makedirs(os.path.join(base, ".lock"))
+        write(os.path.join(base, ".lock", "pid"), str(os.getpid()))
+        code = f'JSON.stringify(updateRunning({base!r}))'
+        self.assertTrue(jxa(code))
+        dead = subprocess.Popen(["/usr/bin/true"]); dead.wait()
+        write(os.path.join(base, ".lock", "pid"), str(dead.pid))
+        self.assertFalse(jxa(code))
+        # A stale lock is replaced atomically; a live one is left alone
+        self.assertTrue(jxa(f'JSON.stringify(takeLock({base + "/.lock"!r}))'))
+        self.assertFalse(os.path.exists(os.path.join(base, ".lock", "pid")))
+        self.assertEqual([f for f in os.listdir(base) if f.startswith(".lock.stale")], [])
+
+    def test_update_script_removes_only_its_own_lock(self):
+        base = os.path.join(new_cache(), "tldr")
+        os.makedirs(os.path.join(base, ".lock"))
+        r = subprocess.run(["/bin/zsh", "-f", os.path.join(SRC, "tldr-update.sh"), base], capture_output=True, text=True)
+        self.assertEqual(r.stderr, "")
+        self.assertFalse(os.path.exists(os.path.join(base, ".lock")))
+        os.makedirs(os.path.join(base, ".lock"))
+        # Another download took over the lock while this one ran: its lock stays
+        r = subprocess.run(["/bin/zsh", "-f", "-c", f'source {os.path.join(SRC, "tldr-update.sh")!r} {base!r}; print 1 > {base!r}/.lock/pid'])
+        self.assertTrue(os.path.exists(os.path.join(base, ".lock")))
+
+    def test_corrupt_tldr_index_is_rebuilt(self):
+        cache = new_cache()
+        d = tempfile.mkdtemp(dir=TMP)
+        make_zip(os.path.join(d, "tldr-pages.en.zip"), EN)
+        url = "file://" + d + "/tldr-pages.{lang}.zip"
+        items("tldr", "", cache=cache, TK_TLDR_URL=url, TK_SYNC_UPDATE="1")
+        idx = os.path.join(cache, "tldr", "en.index.json")
+        with open(os.path.join(cache, "tldr", "en.stamp")) as f:
+            stamp = float(f.read())
+        self.assertEqual(jxa("JSON.stringify(ago(Date.UTC(2020, 0, 1, 23, 30) / 1000))", TZ="Pacific/Auckland"), "2020-01-02")
+        for bad in ["null", "[]", json.dumps({"stamp": stamp, "platforms": None}), json.dumps({"stamp": stamp, "platforms": {"common": 5}})]:
+            write(idx, bad)
+            self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=url)[0]["title"], "tar", bad)
 
 
 def tearDownModule():

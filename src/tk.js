@@ -8,6 +8,7 @@
 // source: they are passed as argv to fixed scripts in ./applescript and ./runner.sh.
 ObjC.import("Foundation");
 ObjC.import("AppKit");
+ObjC.bindFunction("kill", ["int", ["int", "int"]]);
 
 const ENV = $.NSProcessInfo.processInfo.environment;
 function env(name, fallback) {
@@ -131,10 +132,35 @@ function tildify(p) {
   return p === HOME ? "~" : p.startsWith(HOME + "/") ? "~" + p.slice(HOME.length) : p;
 }
 
+// The first `n` UTF-16 units of `s`, never ending on half of a surrogate pair (an emoji cut in two
+// becomes a lone surrogate, and Alfred rejects the whole JSON).
+function cut(s, n) {
+  if (s.length <= n) return s;
+  const c = s.charCodeAt(n - 1);
+  return s.slice(0, c >= 0xd800 && c <= 0xdbff ? n - 1 : n);
+}
+
+// Lone surrogates (from a cut, or a "\ud800" escape in a config file) -> U+FFFD.
+function wellFormed(s) {
+  if (!/[\ud800-\udfff]/.test(s)) return s;
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      out += s[i] + s[i + 1];
+      i++;
+    } else out += c >= 0xd800 && c <= 0xdfff ? "\ufffd" : s[i];
+  }
+  return out;
+}
+
+// Display text: no control characters (escape sequences in history, say) or bidi overrides,
+// which would garble or disguise Alfred's rows.
+const UNSAFE = /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g;
+
 function oneLine(s, max = 200) {
-  // Control characters (escape sequences in history, say) would garble Alfred's rows.
-  const t = String(s).replace(/\r?\n/g, " ⏎ ").replace(/\s+/g, " ").replace(/[\x00-\x1f\x7f]/g, "").trim();
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
+  const t = String(s).replace(/\r?\n/g, " ⏎ ").replace(/\s+/g, " ").replace(UNSAFE, "").trim();
+  return t.length > max ? cut(t, max - 1) + "…" : t;
 }
 
 function plural(n, word) {
@@ -205,8 +231,8 @@ function ago(t) {
   if (d < 86400) return `${Math.floor(d / 3600)} h ago`;
   if (d < 2 * 86400) return "yesterday";
   if (d < 30 * 86400) return `${Math.floor(d / 86400)} days ago`;
-  const date = new Date(t * 1000);
-  return date.toISOString().slice(0, 10);
+  const date = new Date(t * 1000); // the local date, not UTC's
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 // Alfred's JSON should stay small: very long values travel as "tkfile:<cache path>" and are read
@@ -216,8 +242,27 @@ function bigArg(text) {
   if (text.length <= LARGE) return text;
   const dir = mkdirs(`${cacheDir()}/big`);
   const path = `${dir}/big-${hash(text)}-${text.length}.txt`;
-  if (!exists(path)) writeFile(path, text);
+  if (exists(path)) {
+    // Still in use: keep it out of the pruning below.
+    FM.setAttributesOfItemAtPathError($({ NSFileModificationDate: $.NSDate.date }), path, $());
+  } else {
+    prune(dir, 86400, 200);
+    writeFile(path, text);
+  }
   return `tkfile:${path}`;
+}
+
+// Keep a cache folder small: remove files older than `maxAge` seconds, then the oldest beyond `maxCount`.
+function prune(dir, maxAge, maxCount) {
+  const files = [];
+  for (const f of listDir(dir)) {
+    const st = stat(`${dir}/${f}`);
+    if (!st || st.dir) continue;
+    if (now() - st.mtime > maxAge) FM.removeItemAtPathError(`${dir}/${f}`, $());
+    else files.push([st.mtime, f]);
+  }
+  files.sort((a, b) => b[0] - a[0]);
+  for (const [, f] of files.slice(maxCount)) FM.removeItemAtPathError(`${dir}/${f}`, $());
 }
 
 function resolveArg(arg) {
@@ -230,7 +275,7 @@ function resolveArg(arg) {
 }
 
 function textFor(value) {
-  const short = value.length > 5000 ? value.slice(0, 5000) + "…" : value;
+  const short = value.length > 5000 ? cut(value, 5000) + "…" : value;
   return { copy: value.length > LARGE ? "Too long for ⌘C: press ↩ to copy it" : value, largetype: short };
 }
 
@@ -238,8 +283,14 @@ function info(title, subtitle, icon = "info", extra = {}) {
   return Object.assign({ title, subtitle: subtitle || "", valid: false, icon: { path: `icons/${icon}.png` } }, extra);
 }
 
+// Every string is made well-formed, and titles and subtitles are made safe to display.
+function jsonOut(obj) {
+  return JSON.stringify(obj, (k, v) => typeof v !== "string" ? v
+    : k === "title" || k === "subtitle" ? wellFormed(/[\t\n\r]/.test(v) ? oneLine(v, 100000) : v.replace(UNSAFE, "")) : wellFormed(v));
+}
+
 function output(items, extra = {}) {
-  return JSON.stringify(Object.assign({ skipknowledge: true, items }, extra));
+  return jsonOut(Object.assign({ skipknowledge: true, items }, extra));
 }
 
 // ---------- terminals ----------
@@ -292,7 +343,7 @@ function installedTerminals() {
 
 function preferredTerminal() {
   const want = env("terminal", "auto");
-  if (TERMINALS[want] && appPath(want)) return want;
+  if (Object.prototype.hasOwnProperty.call(TERMINALS, want) && appPath(want)) return want;
   return installedTerminals()[0] || "terminal";
 }
 
@@ -586,6 +637,7 @@ function yamlName(text) {
 
 function tomlName(text) {
   if (text === null) return null;
+  text = text.split(/^[ \t]*\[/m)[0]; // top level only: a pane's `name` isn't the config's
   const m = text.match(/^name[ \t]*=[ \t]*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/m);
   if (!m) return null;
   if (m[2] !== undefined) return m[2] || null;
@@ -606,7 +658,7 @@ function warpConfigs() {
     const path = `${tabDir}/${f}`;
     if (isDir(path)) continue;
     const stem = f.replace(/\.toml$/i, "");
-    const name = tomlName(readText(path, 65536)) || stem;
+    const name = wellFormed(tomlName(readText(path, 65536)) || stem); // "\ud800" escapes break normalize()
     out.push({ kind: "tab", name, path, uri: `${scheme}://tab_config/${encodeURIComponent(stem)}` });
   }
   const lcDir = `${base}/launch_configurations`;
@@ -614,7 +666,8 @@ function warpConfigs() {
     if (!/\.ya?ml$/i.test(f) || f.startsWith(".")) continue;
     const path = `${lcDir}/${f}`;
     if (isDir(path)) continue;
-    const name = yamlName(readText(path, 65536));
+    const yn = yamlName(readText(path, 65536));
+    const name = yn && wellFormed(yn);
     // Warp matches the `name:` field (warpdotdev/warp#15003); the path is the documented fallback.
     out.push({ kind: "launch", name: name || f.replace(/\.ya?ml$/i, ""), path, uri: `${scheme}://launch/${encodeURIComponent(name || path)}`, unnamed: !name });
   }
@@ -653,7 +706,8 @@ function warpItems(query) {
       mods: {
         cmd: { arg: c.path, valid: true, subtitle: "Reveal in Finder", variables: { tk_action: "reveal" } },
         alt: { arg: c.path, valid: true, subtitle: "Edit the file", variables: { tk_action: "edit" } },
-        ...(c.kind === "tab" && warpApp ? { ctrl: { arg: `${c.uri}?new_window=true`, valid: true, subtitle: "Open in a new window", variables: { tk_action: "url" } } } : {}),
+        ctrl: c.kind === "tab" && warpApp ? { arg: `${c.uri}?new_window=true`, valid: true, subtitle: "Open in a new window", variables: { tk_action: "url" } }
+          : { arg: c.uri, valid: false, subtitle: c.kind === "tab" ? `${wname} is not installed` : "Only Tab Configs can open in a new window" },
       },
     }]);
   }
@@ -980,9 +1034,28 @@ function readNum(path) {
   return isNaN(n) ? 0 : n;
 }
 
+// The download holds <base>/.lock (a folder, created atomically) with its PID inside. The lock is
+// stale when that process is gone, or after LOCK_TTL, which is longer than the download can take.
+const LOCK_TTL = 900;
+
 function updateRunning(base) {
-  const s = stat(`${base}/.lock`);
-  return !!s && now() - s.mtime < 600;
+  const lock = `${base}/.lock`;
+  const s = stat(lock);
+  if (!s) return false;
+  const age = now() - s.mtime;
+  if (age > LOCK_TTL) return false;
+  const pid = parseInt(readText(`${lock}/pid`) || "", 10);
+  return pid > 0 ? $.kill(pid, 0) === 0 : age < 60; // no PID yet: the download is starting
+}
+
+function takeLock(lock) {
+  const mk = () => FM.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(lock, false, $(), $());
+  if (mk()) return true;
+  // Stale: move it aside first, so only one process can replace it.
+  const aside = `${lock}.stale-${$.NSUUID.UUID.UUIDString.js}`;
+  if (!FM.moveItemAtPathToPathError(lock, aside, $())) return false;
+  FM.removeItemAtPathError(aside, $());
+  return mk();
 }
 
 // Download (or refresh) the pages archive in the background.
@@ -991,9 +1064,8 @@ function startUpdate(base, langs, force) {
   if (!force && now() - readNum(attempt) < 3600) return; // at most one automatic try per hour
   const lock = `${base}/.lock`;
   if (updateRunning(base)) return;
-  FM.removeItemAtPathError(lock, $()); // stale
   // Take the lock here, so the next run of the Script Filter already sees "downloading".
-  if (!FM.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(lock, false, $(), $())) return;
+  if (!takeLock(lock)) return;
   writeFile(attempt, String(Math.floor(now())));
   const args = ["-f", `${CWD}/tldr-update.sh`, base, ...langs];
   if (env("TK_SYNC_UPDATE", "") === "1") exec("/bin/zsh", args);
@@ -1013,7 +1085,8 @@ function tldrIndex(base, lang) {
   if (cached !== null) {
     try {
       const j = JSON.parse(cached);
-      if (j.stamp === stamp) return j;
+      if (j && j.stamp === stamp && j.platforms && typeof j.platforms === "object" &&
+          Object.values(j.platforms).every(Array.isArray)) return j;
     } catch (e) {
       // rebuild
     }
@@ -1174,7 +1247,10 @@ function tldrItems(query) {
         quicklookurl: page.url || undefined,
         variables: { tk_action: "url" },
         icon: { path: "icons/tldr.png" },
-        mods: { cmd: { arg: page.url || "", valid: !!page.url, subtitle: page.url ? `Open ${page.url}` : "No documentation link", variables: { tk_action: "url" } } },
+        mods: {
+          cmd: { arg: page.url || "", valid: !!page.url, subtitle: page.url ? `Open ${page.url}` : "No documentation link", variables: { tk_action: "url" } },
+          alt: { arg: page.url || "", valid: false, subtitle: "Choose an example to copy it with its {{placeholders}}" },
+        },
         text: { copy: page.desc.join("\n"), largetype: page.desc.join("\n") },
       });
     }
@@ -1256,9 +1332,14 @@ function cheatItems(topic) {
   const dir = mkdirs(`${cacheDir()}/cheat`);
   const file = `${dir}/${hexOf(topic.toLowerCase()).slice(0, 120)}-${hash(topic.toLowerCase())}.txt`;
   const st = stat(file);
-  let text = st && now() - st.mtime < 86400 ? readText(file) : null;
+  let text = st && now() - st.mtime < 86400 ? readText(file) : null, offline = "";
   if (text === null) {
-    const r = exec("/usr/bin/curl", ["-fsSL", "--max-time", "10", "-A", "curl/8 (Alfred Terminal Kit)", "--", api]);
+    // After a 429, every process waits five minutes before asking cheat.sh again.
+    const backoff = `${dir}/.backoff`;
+    const wait = Math.ceil((readNum(backoff) - now()) / 60);
+    const r = wait > 0 ? { ok: false, err: `cheat.sh is limiting requests: try again in ${plural(wait, "minute")}` }
+      : exec("/usr/bin/curl", ["-fsSL", "--max-time", "10", "-A", "curl/8 (Alfred Terminal Kit)", "--", api]);
+    if (!r.ok && wait <= 0 && /\b429\b/.test(r.err)) writeFile(backoff, String(Math.floor(now() + 300)));
     if (!r.ok) {
       const stale = st ? readText(file) : null;
       if (stale === null) {
@@ -1266,12 +1347,14 @@ function cheatItems(topic) {
           { title: `Open ${page}`, subtitle: "In your browser", arg: page, variables: { tk_action: "url" }, icon: { path: "icons/cheat.png" } }] };
       }
       text = stale;
+      offline = ` · offline, saved ${ago(st.mtime)}`;
     } else {
       text = r.out.replace(/\x1b\[[0-9;]*m/g, "");
+      prune(dir, 30 * 86400, 300);
       writeFile(file, text);
     }
   }
-  const items = [{ title: `cheat.sh/${topic}`, subtitle: "↩ Open in the browser", arg: page, variables: { tk_action: "url" }, icon: { path: "icons/cheat.png" } }];
+  const items = [{ title: `cheat.sh/${topic}`, subtitle: `↩ Open in the browser${offline}`, arg: page, variables: { tk_action: "url" }, icon: { path: "icons/cheat.png" } }];
   if (/^Unknown topic\./m.test(text) || !text.trim()) {
     items.push(info(`cheat.sh has no sheet for “${topic}”`, ""));
     return { items };
@@ -1466,7 +1549,10 @@ function sshItems(query) {
     const cmd = `ssh ${typed[3] ? `-p ${typed[3]} ` : ""}${shq((typed[1] ? typed[1] + "@" : "") + host)}`;
     items.push({
       title: `Connect to ${q}`, subtitle: `${cmd}  ·  in ${term}`, arg: cmd, variables: { tk_action: "ssh" }, icon: { path: "icons/terminal.png" },
-      mods: { cmd: { arg: cmd, subtitle: `Copy “${cmd}”`, variables: { tk_action: "copy" } } },
+      mods: {
+        cmd: { arg: cmd, subtitle: `Copy “${cmd}”`, variables: { tk_action: "copy" } },
+        alt: { arg: cmd, valid: false, subtitle: "Not a host from ~/.ssh" },
+      },
     });
   }
   if (!items.length) {
@@ -1554,7 +1640,7 @@ function run(argv) {
       // Alfred learns which configurations get opened (they have uids), so the usual ones come first.
       case "warp": return output(warpItems(query), appPath("warp") ? { skipknowledge: false } : {});
       case "hist": return output(histItems(query));
-      case "ssh": return JSON.stringify({ items: sshItems(query) });
+      case "ssh": return jsonOut({ items: sshItems(query) });
       case "tldr": {
         const r = tldrItems(query);
         return output(r.items, r.rerun ? { rerun: r.rerun } : {});

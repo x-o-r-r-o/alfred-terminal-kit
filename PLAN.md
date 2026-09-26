@@ -23,6 +23,21 @@ Raycast demand this workflow replaces (downloads, 2026-09-26):
 - [x] `ssh` hosts from ~/.ssh/config (with Include) + known_hosts, open in preferred terminal
 - [x] Terminal preference: Warp, Ghostty, iTerm2, Terminal, kitty, WezTerm, Alacritty (auto-detected)
 
+## Known limitations
+- Warp has no scripting API. Warp 0.2026.05.20+ runs commands from a temporary Tab Config (deleted after 60 s); older versions get the command pasted into a new tab, which needs Accessibility access for Alfred.
+- Hashed `known_hosts` entries can't be listed; `Match` blocks and `Host *` defaults aren't shown in subtitles (ssh still applies them when connecting).
+- Only the newest 32 MB of each history file and the newest 50,000 atuin commands are indexed.
+- cheat.sh is online only (results cached for a day, older copies shown offline with their age); after an HTTP 429 every lookup pauses for five minutes.
+- tldr pages of a language you stop using stay in the workflow cache.
+
+## Verify in real Alfred
+- [ ] `warp://tab_config/<name>` (and `?new_window=true`) with real Warp and Warp Preview; the temporary run config runs the command in the right folder and disappears.
+- [ ] The paste fallback on a Warp older than 0.2026.05.20 (Accessibility prompt, clipboard restored).
+- [ ] Ghostty 1.3+ AppleScript, iTerm2 tab/window, Terminal on a cold start (no second window), kitty/WezTerm/Alacritty via runner.sh.
+- [ ] Universal Action with several folders selected.
+- [ ] Modifier subtitles: ⌃ on a Launch Configuration and ⌥ on "Connect to …" say why nothing happens.
+- [ ] First tldr download: "Downloading…" reruns, then the page appears.
+
 ## Tech
 - **Stack:** zsh + JXA; fixed AppleScripts that take commands as argv.
 - **Dependencies:** None. tldr pages are data, not code, so fetching them is allowed; cache them in alfred_workflow_cache.
