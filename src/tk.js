@@ -173,6 +173,31 @@ function ago(t) {
   return date.toISOString().slice(0, 10);
 }
 
+// Alfred's JSON should stay small: very long values travel as "tkfile:<cache path>" and are read
+// back by ./resolve.sh (copy, paste) or resolveArg (other actions).
+const LARGE = 20000;
+function bigArg(text) {
+  if (text.length <= LARGE) return text;
+  const dir = mkdirs(`${cacheDir()}/big`);
+  const path = `${dir}/big-${hash(text)}-${text.length}.txt`;
+  if (!exists(path)) writeFile(path, text);
+  return `tkfile:${path}`;
+}
+
+function resolveArg(arg) {
+  const m = /^tkfile:(.*)$/s.exec(arg);
+  if (!m) return arg;
+  const dir = `${cacheDir()}/big/`;
+  if (!m[1].startsWith(dir) || !/^big-[0-9a-f]{8}-\d+\.txt$/.test(m[1].slice(dir.length))) return arg;
+  const t = readText(m[1]);
+  return t === null ? arg : t;
+}
+
+function textFor(value) {
+  const short = value.length > 5000 ? value.slice(0, 5000) + "…" : value;
+  return { copy: value.length > LARGE ? "Too long for ⌘C: press ↩ to copy it" : value, largetype: short };
+}
+
 function info(title, subtitle, icon = "info", extra = {}) {
   return Object.assign({ title, subtitle: subtitle || "", valid: false, icon: { path: `icons/${icon}.png` } }, extra);
 }
@@ -529,7 +554,8 @@ function warpItems(query) {
 const SHELLS = ["zsh", "bash", "fish", "atuin"];
 
 function histSources() {
-  const zshFile = expandTilde(env("zsh_histfile", "").trim()) || `${HOME}/.zsh_history`;
+  let zshFile = expandTilde(env("zsh_histfile", "").trim()) || `${HOME}/.zsh_history`;
+  if (!zshFile.startsWith("/")) zshFile = `${HOME}/${zshFile}`; // like HISTFILE=.histfile in ~/.zshrc
   const list = [
     { kind: 0, path: zshFile },
     { kind: 1, path: `${HOME}/.bash_history` },
@@ -634,7 +660,8 @@ const HIST_WARNINGS = [];
 
 function parseAtuin(path) {
   const sqlite = env("TK_SQLITE", "/usr/bin/sqlite3");
-  const q = (where) => `SELECT timestamp, command FROM history ${where} ORDER BY timestamp ASC;`;
+  // The newest 50,000 commands keep a rebuild of the index fast on huge databases.
+  const q = (where) => `SELECT timestamp, command FROM (SELECT timestamp, command FROM history ${where} ORDER BY timestamp DESC LIMIT 50000) ORDER BY timestamp ASC;`;
   let r = exec(sqlite, ["-readonly", "-json", path, q("WHERE deleted_at IS NULL")]);
   if (!r.ok) r = exec(sqlite, ["-readonly", "-json", path, q("")]);
   if (!r.ok) {
@@ -746,16 +773,17 @@ function histItems(query) {
   for (const [cmd, t, kind] of histSearch(entries, query, 50)) {
     const shell = SHELLS[kind];
     const when = t ? ` · ${ago(t)}` : "";
+    const arg = bigArg(cmd);
     items.push({
       title: oneLine(cmd),
       subtitle: `${shell}${when}  ·  ↩ Copy · ⌘↩ Paste · ⌥↩ Run in ${term}`,
-      arg: cmd,
+      arg,
       variables: { tk_action: "copy" },
       icon: { path: `icons/${shell}.png` },
-      text: { copy: cmd, largetype: cmd },
+      text: textFor(cmd),
       mods: {
-        cmd: { arg: cmd, subtitle: "Paste into the frontmost app", variables: { tk_action: "paste" } },
-        alt: { arg: cmd, subtitle: `Run in a new ${term} ${opensTab(preferredTerminal()) ? "tab" : "window"}`, variables: { tk_action: "run" } },
+        cmd: { arg, subtitle: "Paste into the frontmost app", variables: { tk_action: "paste" } },
+        alt: { arg, subtitle: `Run in a new ${term} ${opensTab(preferredTerminal()) ? "tab" : "window"}`, variables: { tk_action: "run" } },
       },
     });
   }
@@ -800,7 +828,7 @@ function updateRunning(base) {
 
 // Download (or refresh) the pages archive in the background.
 function startUpdate(base, langs, force) {
-  const attempt = `${base}/.attempt`;
+  const attempt = `${base}/.attempt-${langs.join("+")}`;
   if (!force && now() - readNum(attempt) < 3600) return; // at most one automatic try per hour
   const lock = `${base}/.lock`;
   if (updateRunning(base)) return;
@@ -907,10 +935,10 @@ function parsePage(md) {
       // "> More information: <https://…>." (any language): the link, not the description.
       const u = /<(https?:\/\/[^>\s]+)>\.?\s*$/.exec(m[1]);
       if (u) page.url = u[1];
-      else page.desc.push(m[1].trim());
+      else page.desc.push(m[1].trim().replace(/`([^`]*)`/g, "$1"));
     } else if ((m = /^-\s+(.*)$/.exec(line))) pending = m[1].trim().replace(/:$/, "");
     else if ((m = /^`(.*)`\s*$/.exec(line)) && pending !== null) {
-      page.examples.push({ desc: pending, cmd: m[1] });
+      page.examples.push({ desc: pending.replace(/`([^`]*)`/g, "$1"), cmd: m[1] });
       pending = null;
     }
   }
@@ -952,7 +980,8 @@ function tldrItems(query) {
 
   if (!q) {
     const count = new Set([].concat(...Object.values(idx.en.platforms))).size;
-    const langNote = langs[0] !== "en" ? (idx[langs[0]] ? ` · ${langs[0]} with English fallback` : ` · ${langs[0]} isn't available, using English`) : "";
+    const langNote = langs[0] === "en" ? "" : idx[langs[0]] ? ` · ${langs[0]} with English fallback`
+      : updateRunning(base) ? ` · downloading ${langs[0]}…` : ` · ${langs[0]} isn't available, using English`;
     return { items: [
       info("Type a command name", `${plural(count, "page")} offline · updated ${ago(stampEn)}${langNote}`, "tldr"),
       { title: "Update tldr pages now", subtitle: updateRunning(base) ? "Updating…" : "Pages refresh weekly in the background", arg: "update", variables: { tk_action: "tldr-update" }, icon: { path: "icons/download.png" } },
@@ -1042,6 +1071,16 @@ function cheatURL(topic) {
   return { page: `https://cheat.sh/${path}`, api: `${env("TK_CHEAT_URL", "https://cheat.sh")}/${path}?T` };
 }
 
+// FNV-1a, for short unique file names.
+function hash(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
 function hexOf(s) {
   return unescape(encodeURIComponent(s)).split("").map((c) => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
 }
@@ -1052,7 +1091,7 @@ function cheatItems(topic) {
   if (topic.length > 100) return { items: [info("That's too long for cheat.sh", "", "error")] };
   const { page, api } = cheatURL(topic);
   const dir = mkdirs(`${cacheDir()}/cheat`);
-  const file = `${dir}/${hexOf(topic.toLowerCase()).slice(0, 180)}.txt`;
+  const file = `${dir}/${hexOf(topic.toLowerCase()).slice(0, 120)}-${hash(topic.toLowerCase())}.txt`;
   const st = stat(file);
   let text = st && now() - st.mtime < 86400 ? readText(file) : null;
   if (text === null) {
@@ -1303,6 +1342,7 @@ function openFile(path, how) {
 
 function act(arg) {
   const action = env("tk_action", "");
+  arg = resolveArg(arg);
   switch (action) {
     case "run":
     case "ssh":

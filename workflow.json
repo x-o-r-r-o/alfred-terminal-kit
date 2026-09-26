@@ -363,6 +363,17 @@
       "note": "Routes on the tk_action variable set by each result"
     },
     {
+      "id": "resolve",
+      "type": "script",
+      "script": "./resolve.sh \"$1\"",
+      "note": "Reads very long values back from the cache"
+    },
+    {
+      "id": "resolve_paste",
+      "type": "script",
+      "script": "./resolve.sh \"$1\""
+    },
+    {
       "id": "copy",
       "type": "clipboard",
       "autopaste": false
@@ -452,12 +463,12 @@
     },
     {
       "from": "route",
-      "to": "copy",
+      "to": "resolve",
       "branch": "copy"
     },
     {
       "from": "route",
-      "to": "paste",
+      "to": "resolve_paste",
       "branch": "paste"
     },
     {
@@ -475,6 +486,14 @@
     {
       "from": "open_dirs",
       "to": "notify"
+    },
+    {
+      "from": "resolve",
+      "to": "copy"
+    },
+    {
+      "from": "resolve_paste",
+      "to": "paste"
     }
   ]
 }

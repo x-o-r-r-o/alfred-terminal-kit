@@ -10,7 +10,7 @@ for lang in "$@"; do
   [[ $lang =~ '^[a-z]{2,3}(_[A-Z]{2})?$' ]] || continue
   url=${url_tpl//\{lang\}/$lang}
   tmp=$(/usr/bin/mktemp -d "$base/.tmp.XXXXXX") || exit 1
-  if /usr/bin/curl -fsSL --max-time 180 --retry 2 -o "$tmp/pages.zip" -- "$url" 2>"$tmp/err" &&
+  if /usr/bin/curl -fsSL --max-time 120 --retry 1 -o "$tmp/pages.zip" -- "$url" 2>"$tmp/err" &&
      /usr/bin/unzip -qo "$tmp/pages.zip" -d "$tmp/pages" 2>>"$tmp/err" >/dev/null &&
      [[ -d $tmp/pages/common ]]; then
     rm -rf -- "$base/$lang.old"

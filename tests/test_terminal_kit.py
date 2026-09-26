@@ -308,6 +308,48 @@ class HistoryTests(unittest.TestCase):
         write(os.path.join(home, "hist", "custom"), b": 1700000000:0;custom one\n")
         self.assertEqual(items("hist", home=home, zsh_histfile="~/hist/custom")[0]["arg"], "custom one")
 
+    def test_relative_histfile_is_in_home(self):
+        # Audit 1: HISTFILE=.histfile style settings are relative to the home folder
+        home = new_home()
+        write(os.path.join(home, ".histfile"), b": 1700000000:0;relative one\n")
+        self.assertEqual(items("hist", home=home, zsh_histfile=".histfile")[0]["arg"], "relative one")
+
+    def test_atuin_newest_50000(self):
+        # Audit 1: huge atuin databases are capped to keep index rebuilds fast
+        home = new_home()
+        db = os.path.join(home, ".local/share/atuin/history.db")
+        os.makedirs(os.path.dirname(db))
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE history (timestamp INTEGER, command TEXT, deleted_at INTEGER)")
+        con.executemany("INSERT INTO history VALUES (?, ?, NULL)", ((1600000000 * 10**9 + i * 10**9, f"c{i}") for i in range(50010)))
+        con.commit()
+        con.close()
+        its = items("hist", home=home)
+        self.assertEqual(its[0]["arg"], "c50009")
+        self.assertEqual(items("hist", "zzzz", home=home)[0]["subtitle"], "Searched 50,000 commands")
+
+    def test_very_long_command_goes_through_cache(self):
+        # Audit 1: a multi-megabyte command must not bloat Alfred's JSON
+        home = new_home()
+        cache = new_cache()
+        big = "echo " + "ü" * 30000
+        write(os.path.join(home, ".zsh_history"), f": 1700000000:0;{big}\n".encode())
+        out = run("hist", "", home=home, cache=cache)
+        self.assertLess(len(out.stdout), 10000)
+        it = json.loads(out.stdout)["items"][0]
+        self.assertTrue(it["arg"].startswith("tkfile:" + cache))
+        self.assertEqual(it["mods"]["alt"]["arg"], it["arg"])
+        env = dict(os.environ, alfred_workflow_cache=cache)
+        r = subprocess.run(["./resolve.sh", it["arg"]], cwd=SRC, env=env, capture_output=True, text=True)
+        self.assertEqual(r.stdout, big)
+        for bad in ["tkfile:/etc/hosts", f"tkfile:{cache}/big/../../x.txt", "-n", "tkfile:"]:
+            r = subprocess.run(["./resolve.sh", bad], cwd=SRC, env=env, capture_output=True, text=True)
+            self.assertEqual(r.stdout, bad)
+        steps, _ = act("run", it["arg"], cache=cache, home=home, TK_APPS=json.dumps({"iterm": "/Applications/iTerm.app"}))
+        self.assertEqual(steps["steps"][0]["argv"][0], big)
+        steps, _ = act("run", "tkfile:/etc/hosts", cache=cache, TK_APPS=json.dumps({"iterm": "/Applications/iTerm.app"}))
+        self.assertEqual(steps["steps"][0]["argv"][0], "tkfile:/etc/hosts")
+
     def test_cache_invalidated_by_mtime(self):
         home = self.home_with(zsh=b": 1700000000:0;first\n")
         cache = new_cache()
@@ -571,7 +613,7 @@ def make_zip(path, pages):
 TAR = """# tar
 
 > Archiving utility.
-> Often combined with a compression method.
+> Often combined with a compression method, such as `gzip`.
 > More information: <https://www.gnu.org/software/tar>.
 
 - [c]reate an archive:
@@ -615,7 +657,7 @@ class TldrTests(unittest.TestCase):
     def test_page_rows(self):
         its = self.t("tar")
         self.assertEqual(its[0]["title"], "tar")
-        self.assertEqual(its[0]["subtitle"], "Archiving utility. Often combined with a compression method.")
+        self.assertEqual(its[0]["subtitle"], "Archiving utility. Often combined with a compression method, such as gzip.")
         self.assertEqual(its[0]["arg"], "https://www.gnu.org/software/tar")
         self.assertEqual(its[0]["variables"]["tk_action"], "url")
         self.assertEqual(its[1]["arg"], "tar cf path/to/target.tar path/to/file1 path/to/file2 ...")
@@ -646,7 +688,7 @@ class TldrTests(unittest.TestCase):
     def test_language_fallback_platform_first(self):
         cache = new_cache()
         its = items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1", tldr_language="de")
-        self.assertEqual(its[0]["subtitle"], "Archivierungswerkzeug. Often combined with a compression method.")
+        self.assertEqual(its[0]["subtitle"], "Archivierungswerkzeug. Often combined with a compression method, such as gzip.")
         self.assertEqual(its[0]["arg"], "https://www.gnu.org/software/tar")
         # English osx page beats German linux page (platform before language)
         its = items("tldr", "sed", cache=cache, TK_TLDR_URL=self.url, tldr_language="de")
@@ -721,12 +763,27 @@ class TldrTests(unittest.TestCase):
         run("act", "", cache=cache, tk_action="tldr-update", TK_TLDR_URL="file://" + os.path.dirname(bad) + "/tldr-pages.{lang}.zip", TK_SYNC_UPDATE="1")
         self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url)[0]["title"], "tar")
 
+    def test_switching_language_downloads_it_now(self):
+        # Audit 1: the hourly retry limit must not delay a newly chosen language
+        cache = new_cache()
+        items("tldr", "", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1")
+        its = items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1", tldr_language="de")
+        self.assertTrue(its[0]["subtitle"].startswith("Archivierungswerkzeug"))
+
+    def test_update_fits_in_lock_timeout(self):
+        # Audit 1: two languages with retries must finish before the 10-minute lock goes stale
+        import re
+        src = open(os.path.join(SRC, "tldr-update.sh")).read()
+        t = int(re.search(r"--max-time (\d+)", src).group(1))
+        retries = int(re.search(r"--retry (\d+)", src).group(1))
+        self.assertLess(2 * t * (retries + 1), 600)
+
     def test_weekly_refresh(self):
         cache = new_cache()
         items("tldr", "", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1")
         stamp = os.path.join(cache, "tldr", "en.stamp")
         write(stamp, str(int(time.time()) - 8 * 86400))
-        os.remove(os.path.join(cache, "tldr", ".attempt"))
+        os.remove(os.path.join(cache, "tldr", ".attempt-en"))
         its = items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1")
         self.assertEqual(its[0]["title"], "tar")  # stale pages still answer
         self.assertGreater(float(open(stamp).read()), time.time() - 60)
@@ -759,6 +816,16 @@ class CheatTests(unittest.TestCase):
         self.assertEqual(items("tldr", "@cheat", TK_CHEAT_URL=self.url)[0]["title"], "Type a command, then @cheat")
         for q in ['"q @cheat', "日本 @cheat", "../x @cheat"]:
             items("tldr", q, TK_CHEAT_URL=self.url)
+
+    def test_long_topics_do_not_collide(self):
+        # Audit 1: cache file names stay unique (and short) for long topics
+        cache = new_cache()
+        a, b = "a" * 99 + "x", "a" * 99 + "y"
+        write(os.path.join(self.dir, a), "echo x\n")
+        write(os.path.join(self.dir, b), "echo y\n")
+        self.assertEqual(items("tldr", a + " @cheat", cache=cache, TK_CHEAT_URL=self.url)[1]["arg"], "echo x")
+        self.assertEqual(items("tldr", b + " @cheat", cache=cache, TK_CHEAT_URL=self.url)[1]["arg"], "echo y")
+        self.assertTrue(all(len(f) < 200 for f in os.listdir(os.path.join(cache, "cheat"))))
 
     def test_cached(self):
         cache = new_cache()

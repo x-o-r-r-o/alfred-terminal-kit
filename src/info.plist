@@ -21,11 +21,24 @@
 				<false/>
 			</dict>
 		</array>
+		<key>3615F0B1-5E7E-5676-89C1-7C7C665BC1C2</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>E6B1E60C-260B-5C29-A264-31EF3679DBEE</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
 		<key>4555264E-35B0-50E0-A894-88E114C9DD86</key>
 		<array>
 			<dict>
 				<key>destinationuid</key>
-				<string>2C20C3ED-C750-5B6E-82A4-D932C6FF9275</string>
+				<string>61B0D173-50D0-5007-969F-7A9396F7D47B</string>
 				<key>modifiers</key>
 				<integer>0</integer>
 				<key>modifiersubtext</key>
@@ -37,7 +50,7 @@
 			</dict>
 			<dict>
 				<key>destinationuid</key>
-				<string>E6B1E60C-260B-5C29-A264-31EF3679DBEE</string>
+				<string>3615F0B1-5E7E-5676-89C1-7C7C665BC1C2</string>
 				<key>modifiers</key>
 				<integer>0</integer>
 				<key>modifiersubtext</key>
@@ -63,6 +76,19 @@
 			<dict>
 				<key>destinationuid</key>
 				<string>83E54962-9748-5D3E-A513-B06D16F42B1B</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>61B0D173-50D0-5007-969F-7A9396F7D47B</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>2C20C3ED-C750-5B6E-82A4-D932C6FF9275</string>
 				<key>modifiers</key>
 				<integer>0</integer>
 				<key>modifiersubtext</key>
@@ -511,6 +537,52 @@
 		<dict>
 			<key>config</key>
 			<dict>
+				<key>concurrently</key>
+				<false/>
+				<key>escaping</key>
+				<integer>102</integer>
+				<key>script</key>
+				<string>./resolve.sh "$1"</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>type</key>
+				<integer>0</integer>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>uid</key>
+			<string>61B0D173-50D0-5007-969F-7A9396F7D47B</string>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>concurrently</key>
+				<false/>
+				<key>escaping</key>
+				<integer>102</integer>
+				<key>script</key>
+				<string>./resolve.sh "$1"</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>type</key>
+				<integer>0</integer>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>uid</key>
+			<string>3615F0B1-5E7E-5676-89C1-7C7C665BC1C2</string>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
 				<key>autopaste</key>
 				<false/>
 				<key>clipboardtext</key>
@@ -672,9 +744,16 @@ Every keyword can be changed in the Workflow’s Configuration.
 		<key>2C20C3ED-C750-5B6E-82A4-D932C6FF9275</key>
 		<dict>
 			<key>xpos</key>
-			<integer>470</integer>
+			<integer>690</integer>
 			<key>ypos</key>
 			<integer>20</integer>
+		</dict>
+		<key>3615F0B1-5E7E-5676-89C1-7C7C665BC1C2</key>
+		<dict>
+			<key>xpos</key>
+			<integer>470</integer>
+			<key>ypos</key>
+			<integer>150</integer>
 		</dict>
 		<key>4555264E-35B0-50E0-A894-88E114C9DD86</key>
 		<dict>
@@ -691,6 +770,15 @@ Every keyword can be changed in the Workflow’s Configuration.
 			<integer>30</integer>
 			<key>ypos</key>
 			<integer>540</integer>
+		</dict>
+		<key>61B0D173-50D0-5007-969F-7A9396F7D47B</key>
+		<dict>
+			<key>note</key>
+			<string>Reads very long values back from the cache</string>
+			<key>xpos</key>
+			<integer>470</integer>
+			<key>ypos</key>
+			<integer>20</integer>
 		</dict>
 		<key>83E54962-9748-5D3E-A513-B06D16F42B1B</key>
 		<dict>
@@ -725,7 +813,7 @@ Every keyword can be changed in the Workflow’s Configuration.
 			<key>xpos</key>
 			<integer>690</integer>
 			<key>ypos</key>
-			<integer>20</integer>
+			<integer>280</integer>
 		</dict>
 		<key>BC3C4C17-0C9D-59EC-B10B-CDBBED308CC1</key>
 		<dict>
@@ -737,7 +825,7 @@ Every keyword can be changed in the Workflow’s Configuration.
 		<key>E6B1E60C-260B-5C29-A264-31EF3679DBEE</key>
 		<dict>
 			<key>xpos</key>
-			<integer>470</integer>
+			<integer>690</integer>
 			<key>ypos</key>
 			<integer>150</integer>
 		</dict>
