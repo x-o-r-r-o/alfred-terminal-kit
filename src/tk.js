@@ -613,40 +613,43 @@ function histSources() {
   return out;
 }
 
-// zsh "metafies" bytes 0x83–0x9f and NUL: they are stored as 0x83 followed by (byte ^ 0x20).
+// zsh "metafies" some bytes (NUL and 0x83–0xa2 in zsh 5.9) as 0x83 followed by (byte ^ 0x20). Like
+// zsh's unmetafy() this undoes any pair, whatever the range was in the zsh that wrote the file. A pair
+// never contains "\n", "\\", " " or ":", so the line rules in parseZsh see what zsh sees.
 function unmetafy(raw) {
-  return raw.indexOf("\x83") < 0 ? raw : raw.replace(/\x83([\s\S])/g, (m, c) => String.fromCharCode(c.charCodeAt(0) ^ 0x20));
+  return raw.indexOf("\x83") < 0 ? raw : raw.replace(/\x83([^\n])/g, (m, c) => String.fromCharCode(c.charCodeAt(0) ^ 0x20));
 }
 
-// Returns [[command, time (0 if unknown)], …] oldest first.
+// One history entry, like zsh's readhistfile(): ": <start>:<elapsed>;<command>" (EXTENDED_HISTORY),
+// or a plain command where a leading ":" was written as "\:".
+function zshEntry(buf) {
+  // zsh writes a space after trailing backslashes (so they don't continue the line) and drops it on reading.
+  if (/\\ +$/.test(buf)) buf = buf.slice(0, -1);
+  if (buf[0] === ":") {
+    const m = /^:([^:]*)(?::[^;]*;?)?/.exec(buf);
+    return [buf.slice(m[0].length), Math.max(0, parseInt(m[1], 10) || 0)];
+  }
+  return [buf.startsWith("\\:") ? buf.slice(1) : buf, 0];
+}
+
+// Returns [[command, time (0 if unknown)], …] oldest first. Mirrors readhistline() in zsh's Src/hist.c:
+// a line that ends with a backslash continues on the next line (zsh writes a newline as "\\\n").
 function parseZsh(raw) {
   const lines = decodeUTF8(unmetafy(raw)).split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
   const out = [];
-  const HEADER = /^: *(\d+):\d*;/;
-  let cur = null, t = 0, extended = false;
+  let buf = null;
   for (let line of lines) {
-    if (line.endsWith("\r")) line = line.slice(0, -1);
-    // zsh itself would glue a new ": <time>:0;" entry onto a command that ends with a literal
-    // backslash; in an extended-history file that header can only start a new entry.
-    if (cur !== null && extended && HEADER.test(line)) {
-      out.push([cur.slice(0, -1) + "\\", t]);
-      cur = null;
-    }
-    if (cur === null) {
-      const m = HEADER.exec(line);
-      if (m) extended = true;
-      t = m ? parseInt(m[1], 10) : 0;
-      cur = m ? line.slice(m[0].length) : line;
-    } else cur += line;
-    // A trailing backslash means the command continues on the next line (zsh writes \n as \\\n).
-    if (cur.endsWith("\\")) {
-      cur = cur.slice(0, -1) + "\n";
+    if (line.endsWith("\r")) line = line.slice(0, -1); // a file saved with CRLF line endings (zsh keeps the CR)
+    buf = buf === null ? line : buf + line;
+    if (buf.endsWith("\\")) {
+      buf = buf.slice(0, -1) + "\n";
       continue;
     }
-    out.push([cur, t]);
-    cur = null;
+    out.push(zshEntry(buf));
+    buf = null;
   }
-  if (cur !== null) out.push([cur.replace(/\n$/, ""), t]);
+  if (buf !== null) out.push(zshEntry(buf.slice(0, -1))); // cut off mid-entry
   return out;
 }
 

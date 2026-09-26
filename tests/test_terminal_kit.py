@@ -220,15 +220,37 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(its[1]["variables"]["tk_action"], "copy")
 
     def test_metafied_nul_and_trailing_escaped_backslash(self):
-        # 0x83 itself and bytes like 0x9f (in "ğ" = c4 9f) are metafied
-        data = meta(": 1700000000:0;printf 'ğ'\n: 1700000001:0;echo a\\\\\n: 1700000002:0;ls\n".encode())
+        # 0x83 itself and bytes like 0x9f (in "ğ" = c4 9f) are metafied. zsh writes a space after a
+        # trailing backslash and drops it again when reading.
+        data = meta(": 1700000000:0;printf 'ğ'\n: 1700000001:0;echo a\\\\ \n: 1700000002:0;ls\n".encode())
         self.assertIn(b"\x83", data)
         its = items("hist", home=self.home_with(zsh=data))
         cmds = [i["arg"] for i in its]
         self.assertIn("printf 'ğ'", cmds)
-        # A literal trailing backslash is not glued to the next extended-history entry
         self.assertIn("echo a" + "\\" * 2, cmds)
         self.assertEqual(cmds[0], "ls")
+
+    def test_matches_zsh_reading_its_own_file(self):
+        # Audit 4: zsh writes the history file, and reads it back; Terminal Kit must see the same commands
+        # (continuation lines that look like a timestamp header, trailing backslashes and spaces, a
+        # leading colon, every metafied byte, invalid UTF-8).
+        cmds = ["echo ă Ġ ¢ \u2003 ğ ü", "ends with backslash \\", "bs then space \\ ", "\\",
+                "multi\\\n: 1700000000:0;glued", "two\nlines", "x\\\\", "trailing space ", "tab\there",
+                "日本語 😀", ": colon first", "\\: escaped colon"]
+        for mode in ("setopt extendedhistory", "unsetopt extendedhistory"):
+            home = new_home()
+            hist = os.path.join(home, ".zsh_history")
+            zsh = lambda script, *args: subprocess.run(
+                ["/bin/zsh", "-f", "-i", "-c", f"HISTFILE={hist!r} SAVEHIST=1000 HISTSIZE=1000; {mode}; {script}", "zsh", *args],
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=30).stdout
+            zsh('for c in "$@"; do print -rs -- $c; done; fc -W', *cmds)
+            out = zsh("fc -R; for i in {1..1000}; do [[ -n ${history[$i]+x} ]] && print -rn -- ${history[$i]}$'\\0'; done")
+            zsh_read = [c.decode("utf-8") for c in out.split(b"\0")[:-1]]
+            self.assertEqual(len(zsh_read), len(cmds), mode)
+            if mode.startswith("setopt"):
+                self.assertEqual(zsh_read, cmds)  # with extended history zsh round-trips everything
+            its = items("hist", home=home, hist_dedupe="0")
+            self.assertEqual([i["arg"] for i in its][::-1], zsh_read, mode)
 
     def test_plain_zsh_and_invalid_utf8(self):
         data = b"ls -la\ngit status\n\xff\xfe broken bytes\r\necho last\n"
