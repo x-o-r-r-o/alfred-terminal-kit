@@ -67,6 +67,10 @@
     "info.circle.fill",
     "#64748B"
   ],
+  "offline": [
+    "wifi.slash",
+    "#D97706"
+  ],
   "error": [
     "exclamationmark.triangle.fill",
     "#DC2626"

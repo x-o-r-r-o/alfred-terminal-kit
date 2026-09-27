@@ -199,7 +199,7 @@ function exec(path, args, { wait = true, input = null } = {}) {
   }
   const inP = input !== null ? $.NSPipe.pipe : null;
   task.standardInput = inP || $.NSFileHandle.fileHandleWithNullDevice;
-  if (!task.launchAndReturnError($())) return { ok: false, out: "", err: `Couldn't run ${path}`, status: -1 };
+  if (!task.launchAndReturnError($())) return { ok: false, out: "", err: `Couldn’t run ${path}`, status: -1 };
   if (inP) {
     inP.fileHandleForWriting.writeData($(input).dataUsingEncoding($.NSUTF8StringEncoding));
     inP.fileHandleForWriting.closeFile;
@@ -514,12 +514,12 @@ function launch(cmd, dir) {
     let r = { ok: true, err: "" };
     if (s.type === "exec") r = exec(s.argv[0], s.argv.slice(1));
     else if (s.type === "applescript") r = exec("/usr/bin/osascript", [`${CWD}/applescript/${s.script}.applescript`, ...s.argv]);
-    else if (s.type === "url") r = { ok: openURL(s.url), err: "Couldn't open Warp" };
+    else if (s.type === "url") r = { ok: openURL(s.url), err: "Couldn’t open Warp" };
     else if (s.type === "warp-paste") r = warpPaste(s);
     else if (s.type === "warp-tab-config") r = warpTabConfig(s);
     if (!r.ok) {
       if (cmd) setClipboard(cmd, false);
-      return `Couldn't open ${terminalName(term)}${r.err ? `: ${oneLine(r.err, 120)}` : ""}${cmd ? ". The command is on the clipboard." : ""}`;
+      return `Couldn’t open ${terminalName(term)}${r.err ? `: ${oneLine(r.err, 120)}` : ""}${cmd ? ". The command is on the clipboard." : ""}`;
     }
     if (r.message) return r.message;
   }
@@ -568,11 +568,11 @@ function warpTabConfig(s) {
     const st = stat(`${dir}/${f}`);
     if (st && now() - st.mtime > 120) FM.removeItemAtPathError(`${dir}/${f}`, $());
   }
-  if (!writeFile(s.file, s.toml)) return { ok: false, err: `Couldn't write ${tildify(s.file)}` };
+  if (!writeFile(s.file, s.toml)) return { ok: false, err: `Couldn’t write ${tildify(s.file)}` };
   FM.setAttributesOfItemAtPathError($({ NSFilePosixPermissions: 0o600 }), s.file, $());
   if (!openURL(s.url)) {
     FM.removeItemAtPathError(s.file, $());
-    return { ok: false, err: "Couldn't open Warp" };
+    return { ok: false, err: "Couldn’t open Warp" };
   }
   exec(env("TK_NOHUP", "/usr/bin/nohup"), ["/bin/sh", "-c", 'sleep 60; rm -f -- "$1"', "sh", s.file], { wait: false });
   return { ok: true };
@@ -587,7 +587,7 @@ function warpPaste(s) {
   let pasted = false;
   try {
     setClipboard(s.cmd, true);
-    if (!openURL(s.url)) return { ok: false, err: "Couldn't open Warp" };
+    if (!openURL(s.url)) return { ok: false, err: "Couldn’t open Warp" };
     const r = exec("/usr/bin/osascript", [`${CWD}/applescript/warp-paste.applescript`, s.bundleid, running ? "warm" : "cold"]);
     pasted = r.ok && r.out.trim() === "ok";
   } finally {
@@ -597,7 +597,7 @@ function warpPaste(s) {
     } else setClipboard(s.cmd, false);
   }
   return pasted ? { ok: true }
-    : { ok: true, message: "Warp didn't come to the front in time. The command is on the clipboard: press ⌘V in Warp." };
+    : { ok: true, message: "Warp didn’t come to the front in time. The command is on the clipboard: press ⌘V in Warp." };
 }
 
 // ---------- Finder ----------
@@ -914,14 +914,14 @@ function parseAtuin(path) {
   let r = exec(sqlite, ["-readonly", "-json", path, q("WHERE deleted_at IS NULL")]);
   if (!r.ok) r = exec(sqlite, ["-readonly", "-json", path, q("")]);
   if (!r.ok) {
-    HIST_WARNINGS.push(`atuin history couldn't be read: ${oneLine(r.err, 100)}`);
+    HIST_WARNINGS.push(`Couldn’t read the atuin history: ${oneLine(r.err, 100)}`);
     return [];
   }
   try {
     const rows = r.out.trim() ? JSON.parse(r.out) : [];
     return rows.filter((x) => typeof x.command === "string").map((x) => [x.command, Math.floor(Number(x.timestamp) / 1e9) || 0]);
   } catch (e) {
-    HIST_WARNINGS.push("atuin history couldn't be parsed");
+    HIST_WARNINGS.push("Couldn’t parse the atuin history");
     return [];
   }
 }
@@ -955,7 +955,7 @@ function histIndex() {
     else {
       const raw = readTailLatin1(s.path, parseInt(env("TK_HIST_MAX_BYTES", ""), 10) || 32 * 1024 * 1024);
       if (raw === null) {
-        HIST_WARNINGS.push(`Couldn't read ${tildify(s.path)}`);
+        HIST_WARNINGS.push(`Couldn’t read ${tildify(s.path)}`);
         continue;
       }
       list = s.kind === 0 ? parseZsh(raw) : s.kind === 1 ? parseBash(raw) : parseFish(raw);
@@ -1128,7 +1128,7 @@ function startUpdate(base, langs, force) {
   else if (!exec(env("TK_NOHUP", "/usr/bin/nohup"), ["/bin/zsh", ...args], { wait: false }).ok) {
     // Nothing started: don't leave a lock that would show "Downloading…" for ten minutes.
     FM.removeItemAtPathError(lock, $());
-    writeFile(`${base}/en.error`, "Couldn't start the download");
+    writeFile(`${base}/en.error`, "Couldn’t start the download");
   }
 }
 
@@ -1256,7 +1256,9 @@ function tldrItems(query) {
       return { items: [info("Downloading tldr pages…", "About 3 MB, only the first time. Results appear when it’s done.", "download")], rerun: 0.5 };
     }
     const err = exists(errPath) ? oneLine(readText(errPath) || "", 150) : "";
-    const items = [info("Couldn't download the tldr pages", err || "Check your internet connection", "error"),
+    // No error text, or curl couldn't resolve or connect: the Mac is offline (or GitHub is unreachable).
+    const offline = !err || /\bcurl: \((5|6|7|28|35|52|56)\)/.test(err);
+    const items = [offline ? info("Can’t reach the tldr pages", "Check your internet connection", "offline") : info("Couldn’t download the tldr pages", err, "error"),
       { title: "Try again", subtitle: "Download the tldr pages archive from GitHub", arg: "retry", variables: { tk_action: "tldr-update" }, icon: { path: "icons/download.png" } }];
     if (cheat && q) items.push(cheatRow(q));
     return { items };
@@ -1273,7 +1275,7 @@ function tldrItems(query) {
   if (!q) {
     const count = new Set([].concat(...Object.values(idx.en.platforms))).size;
     const langNote = langs[0] === "en" ? "" : idx[langs[0]] ? ` · ${langs[0]} with English fallback`
-      : updateRunning(base) ? ` · downloading ${langs[0]}…` : ` · ${langs[0]} isn't available, using English`;
+      : updateRunning(base) ? ` · downloading ${langs[0]}…` : ` · ${langs[0]} isn’t available, using English`;
     return { items: [
       info("Type a command name", `${plural(count, "page")} offline · updated ${ago(stampEn)}${langNote}`, "tldr"),
       { title: "Update tldr pages now", subtitle: updateRunning(base) ? "Updating…" : "Pages refresh weekly in the background", arg: "update", variables: { tk_action: "tldr-update" }, icon: { path: "icons/download.png" } },
@@ -1383,7 +1385,7 @@ function hexOf(s) {
 function cheatItems(topic) {
   topic = topic.trim();
   if (!topic) return { items: [info("Type a command, then @cheat", "Example: tar @cheat", "cheat")] };
-  if (topic.length > 100) return { items: [info("That's too long for cheat.sh", "", "error")] };
+  if (topic.length > 100) return { items: [info("That’s too long for cheat.sh", "", "error")] };
   const { page, api } = cheatURL(topic);
   const dir = mkdirs(`${cacheDir()}/cheat`);
   const file = `${dir}/${hexOf(topic.toLowerCase()).slice(0, 120)}-${hash(topic.toLowerCase())}.txt`;
@@ -1393,17 +1395,21 @@ function cheatItems(topic) {
     // After a 429, every process waits five minutes before asking cheat.sh again.
     const backoff = `${dir}/.backoff`;
     const wait = Math.ceil((readNum(backoff) - now()) / 60);
-    const r = wait > 0 ? { ok: false, err: `cheat.sh is limiting requests: try again in ${plural(wait, "minute")}` }
+    const r = wait > 0 ? { ok: false, limited: wait }
       : exec("/usr/bin/curl", ["-fsSL", "--max-time", "10", "-A", "curl/8 (Alfred Terminal Kit)", "--", api]);
     if (!r.ok && wait <= 0 && /\b429\b/.test(r.err)) writeFile(backoff, String(Math.floor(now() + 300)));
     if (!r.ok) {
       const stale = st ? readText(file) : null;
       if (stale === null) {
-        return { items: [info("Couldn't reach cheat.sh", r.err || `curl exited with ${r.status}`, "error"),
+        const http = (/\berror: (\d{3})\b/.exec(r.err || "") || [])[1];
+        const row = r.limited || http === "429" ? info("cheat.sh is limiting requests", `Try again in ${plural(r.limited || 5, "minute")}`, "error")
+          : [5, 6, 7, 28, 35, 52, 56].includes(r.status) ? info("Can’t reach cheat.sh", "Check your internet connection", "offline")
+          : info(`Couldn’t load the cheat sheet${http ? ` (HTTP ${http})` : ""}`, r.err || `curl exited with ${r.status}`, "error");
+        return { items: [row,
           { title: `Open ${page}`, subtitle: "In your browser", arg: page, variables: { tk_action: "url" }, icon: { path: "icons/cheat.png" } }] };
       }
       text = stale;
-      offline = ` · offline, saved ${ago(st.mtime)}`;
+      offline = ` · Offline: showing results from ${ago(st.mtime)}`;
     } else {
       text = r.out.replace(/\x1b\[[0-9;]*m/g, "");
       prune(dir, 30 * 86400, 300);
@@ -1639,14 +1645,14 @@ function openDirs(args) {
 }
 
 function openFile(path, how) {
-  if (!exists(path)) return `${tildify(path)} doesn't exist`;
+  if (!exists(path)) return `${tildify(path)} doesn’t exist`;
   const argv = how === "reveal" ? ["-R", path] : ["-t", path];
   if (DRY) {
     console.log(JSON.stringify({ open: argv }));
     return undefined;
   }
   const r = exec("/usr/bin/open", argv);
-  return r.ok ? undefined : `Couldn't open ${tildify(path)}`;
+  return r.ok ? undefined : `Couldn’t open ${tildify(path)}`;
 }
 
 function act(arg) {
@@ -1668,15 +1674,15 @@ function act(arg) {
         console.log(JSON.stringify({ url }));
         return undefined;
       }
-      return openURL(url) ? undefined : "Couldn't open Warp";
+      return openURL(url) ? undefined : "Couldn’t open Warp";
     }
     case "url":
-      if (!/^(https?|warp|warppreview):\/\//i.test(arg)) return "Couldn't open the link";
+      if (!/^(https?|warp|warppreview):\/\//i.test(arg)) return "Couldn’t open the link";
       if (DRY) {
         console.log(JSON.stringify({ url: arg }));
         return undefined;
       }
-      return openURL(arg) ? undefined : "Couldn't open the link";
+      return openURL(arg) ? undefined : "Couldn’t open the link";
     case "edit":
     case "reveal":
       return openFile(arg, action);

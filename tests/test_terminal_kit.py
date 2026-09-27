@@ -366,7 +366,7 @@ class HistoryTests(unittest.TestCase):
         self.assertTrue(any("atuin" in t for t in titles(its)), titles(its))
         # Audit 4: the failure is cached with the index, so the next keystroke doesn't run sqlite3 again
         its = items("hist", home=home, cache=cache, TK_SQLITE="/nonexistent/sqlite3")
-        self.assertTrue(any("atuin history couldn't be read" in t and "Couldn't run" not in t for t in titles(its)), titles(its))
+        self.assertTrue(any("Couldn’t read the atuin history" in t and "Couldn’t run" not in t for t in titles(its)), titles(its))
 
     def test_fuzzy_with_regex_characters(self):
         # Audit 2: the fuzzy matcher is a regex now: special characters must be escaped
@@ -713,12 +713,12 @@ class LauncherTests(unittest.TestCase):
         steps, _ = act("reveal", f, home=home)
         self.assertEqual(steps, {"open": ["-R", f]})
         _, msg = act("edit", "/nope/missing", home=home)
-        self.assertIn("doesn't exist", msg)
+        self.assertIn("doesn’t exist", msg)
         steps, _ = act("url", "https://example.com/a?b=c", home=home)
         self.assertEqual(steps, {"url": "https://example.com/a?b=c"})
         steps, msg = act("url", "file:///etc/passwd")
         self.assertIsNone(steps)
-        self.assertEqual(msg, "Couldn't open the link")
+        self.assertEqual(msg, "Couldn’t open the link")
         _, msg = act("run", "   ")
         self.assertEqual(msg, "Nothing to run")
         _, msg = act("bogus", "x")
@@ -971,18 +971,25 @@ class TldrTests(unittest.TestCase):
         # Audit 3: if the background download can't start, show the error instead of "Downloading…"
         cache = new_cache()
         its = items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url, TK_NOHUP="/nonexistent/nohup")
-        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
+        self.assertEqual(its[0]["title"], "Couldn’t download the tldr pages")
         self.assertFalse(os.path.exists(os.path.join(cache, "tldr", ".lock")))
+
+    def test_offline_download(self):
+        its = items("tldr", "tar", cache=new_cache(), TK_TLDR_URL="http://127.0.0.1:9/{lang}.zip", TK_SYNC_UPDATE="1")
+        self.assertEqual(its[0]["title"], "Can’t reach the tldr pages")
+        self.assertEqual(its[0]["subtitle"], "Check your internet connection")
+        self.assertEqual(its[0]["icon"]["path"], "icons/offline.png")
+        self.assertEqual(its[1]["variables"]["tk_action"], "tldr-update")  # Try again
 
     def test_download_failure_and_retry(self):
         cache = new_cache()
         its = items("tldr", "tar", cache=cache, TK_TLDR_URL="file:///nonexistent/{lang}.zip", TK_SYNC_UPDATE="1")
-        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
+        self.assertEqual(its[0]["title"], "Couldn’t download the tldr pages")
         self.assertEqual(its[1]["variables"]["tk_action"], "tldr-update")
         self.assertEqual(its[-1]["autocomplete"], "tar @cheat")
         # Not retried automatically within the hour
         its = items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1")
-        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
+        self.assertEqual(its[0]["title"], "Couldn’t download the tldr pages")
         # ...but the Try again action does
         run("act", "retry", cache=cache, tk_action="tldr-update", TK_TLDR_URL=self.url, TK_SYNC_UPDATE="1")
         self.assertEqual(items("tldr", "tar", cache=cache, TK_TLDR_URL=self.url)[0]["title"], "tar")
@@ -1050,7 +1057,7 @@ class TldrTests(unittest.TestCase):
         write(os.path.join(d, "tldr.sha256sums"), f"{'0' * 64}  index.json\n{'f' * 64}  tldr-pages.en.zip\n")
         cache = new_cache()
         its = items("tldr", "tar", cache=cache, TK_TLDR_URL=url, TK_SYNC_UPDATE="1")
-        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
+        self.assertEqual(its[0]["title"], "Couldn’t download the tldr pages")
         self.assertIn("checksum", its[0]["subtitle"])
         write(os.path.join(d, "tldr.sha256sums"), f"{digest}  tldr-pages.en.zip\n")
         run("act", "", cache=cache, tk_action="tldr-update", TK_TLDR_URL=url, TK_SYNC_UPDATE="1")
@@ -1064,7 +1071,7 @@ class TldrTests(unittest.TestCase):
         data[i:i + 3] = b"XXX"  # breaks the CRC of common/tar.md
         write(path, bytes(data))
         its = items("tldr", "tar", cache=new_cache(), TK_TLDR_URL="file://" + d + "/tldr-pages.{lang}.zip", TK_SYNC_UPDATE="1")
-        self.assertEqual(its[0]["title"], "Couldn't download the tldr pages")
+        self.assertEqual(its[0]["title"], "Couldn’t download the tldr pages")
 
     def test_weekly_refresh(self):
         cache = new_cache()
@@ -1099,8 +1106,11 @@ class CheatTests(unittest.TestCase):
         self.assertEqual(items("tldr", "git commit amend @cheat", TK_CHEAT_URL=self.url)[1]["arg"], "git commit --amend")
         self.assertTrue(items("tldr", "nothing @cheat", TK_CHEAT_URL=self.url)[1]["title"].startswith("cheat.sh has no sheet"))
         its = items("tldr", "missing @cheat", TK_CHEAT_URL=self.url)
-        self.assertEqual(its[0]["title"], "Couldn't reach cheat.sh")
+        self.assertEqual(its[0]["title"], "Couldn’t load the cheat sheet")
         self.assertEqual(its[1]["arg"], "https://cheat.sh/missing")
+        its = items("tldr", "tar @cheat", cache=new_cache(), TK_CHEAT_URL="http://127.0.0.1:9")
+        self.assertEqual((its[0]["title"], its[0]["subtitle"], its[0]["icon"]["path"]),
+                         ("Can’t reach cheat.sh", "Check your internet connection", "icons/offline.png"))
         self.assertEqual(items("tldr", "@cheat", TK_CHEAT_URL=self.url)[0]["title"], "Type a command, then @cheat")
         for q in ['"q @cheat', "日本 @cheat", "../x @cheat"]:
             items("tldr", q, TK_CHEAT_URL=self.url)
@@ -1125,7 +1135,7 @@ class CheatTests(unittest.TestCase):
             os.utime(os.path.join(cache, "cheat", f), (time.time() - 2 * 86400,) * 2)
         its = items("tldr", "tar @cheat", cache=cache, TK_CHEAT_URL="file:///nonexistent")
         self.assertEqual(its[1]["arg"], "tar -xvf archive.tar")
-        self.assertIn("offline, saved 2 days ago", its[0]["subtitle"])
+        self.assertIn("Offline: showing results from 2 days ago", its[0]["subtitle"])
 
     def test_disabled(self):
         its = items("tldr", "tar @cheat", TK_CHEAT_URL=self.url, tldr_cheatsh="0")
@@ -1240,8 +1250,8 @@ class FinalReviewTests(unittest.TestCase):
         d = tempfile.mkdtemp(dir=TMP)
         write(os.path.join(d, "ls"), "ls -la\n")
         its = items("tldr", "ls @cheat", cache=cache, TK_CHEAT_URL="file://" + d)
-        self.assertEqual(its[0]["title"], "Couldn't reach cheat.sh")
-        self.assertIn("4 minutes", its[0]["subtitle"])
+        self.assertEqual(its[0]["title"], "cheat.sh is limiting requests")
+        self.assertEqual(its[0]["subtitle"], "Try again in 4 minutes")
         self.assertTrue(its[1].get("valid") is not False and its[1]["arg"] == "https://cheat.sh/ls")
 
     def test_tldr_lock_owner_liveness(self):
