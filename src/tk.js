@@ -297,7 +297,19 @@ function jsonOut(obj) {
     : k === "title" || k === "subtitle" ? wellFormed(/[\t\n\r]/.test(v) ? oneLine(v, 100000) : v.replace(UNSAFE, "")) : wellFormed(v));
 }
 
+// Rows need a uid for Alfred to keep the selected row while the Script Filter reruns (rerun):
+// without one the selection jumps back to the first row on every rerun (found in real Alfred).
+// The uid is the position plus the title with its numbers masked, so countdowns, prices and clocks
+// keep it, while typing something new changes it and the selection resets to the top as usual.
+function stableUids(items) {
+  items.forEach((it, i) => {
+    if (it && !it.uid) it.uid = `${i}|${String(it.title || "").replace(/[0-9]+/g, "#")}`;
+  });
+  return items;
+}
+
 function output(items, extra = {}) {
+  stableUids(items);
   return jsonOut(Object.assign({ skipknowledge: true, items }, extra));
 }
 
@@ -494,6 +506,9 @@ function restoreClipboard(snapshot) {
     objs.addObject(item);
   }
   pb.writeObjects(objs);
+  // Several items (e.g. files copied in Finder) only all reach the pasteboard if the
+  // process doesn't exit right away
+  if (snapshot.length > 1) delay(0.2);
 }
 
 function openURL(url) {
